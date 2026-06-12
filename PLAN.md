@@ -35,7 +35,7 @@ stamp one `demo` product to prove the generator.
 - **Topology (hybrid):** core data via FastAPI → Supabase Postgres (pooler 6543); Supabase Auth (FastAPI verifies JWTs); `supabase-js` on frontend ONLY for auth/Realtime/Storage uploads
 - **Contracts:** FastAPI OpenAPI → `@hey-api/openapi-ts` (pinned exact, pre-1.0) + TanStack Query plugin; generated client committed per product
 - **Hosting:** web → Vercel (one project/product, turbo-ignore); per-env separate Supabase projects; local dev via Supabase CLI stack
-- **Quality:** ESLint flat config + Prettier; Ruff; Vitest/Jest + RNTL; Playwright (web E2E); Maestro (mobile E2E); pytest + httpx + typegen drift check; GitHub Actions (affected-only)
+- **Quality:** ESLint flat config + Prettier; Ruff; **single Jest runner** (jest-expo preset) + RNTL for ALL JS tests; Playwright (web E2E, **nightly CI**); Maestro (mobile E2E, **local-only initially**); pytest + httpx against **real Postgres**; typegen drift check; GitHub Actions (affected-only) — full inventory in “Testing strategy”
 - **Cross-cutting:** Sentry (`@sentry/react-native` — NOT deprecated `sentry-expo`), Expo Push, Supabase Storage/CDN
 - **Multi-product:** `products/<name>/` consuming shared `packages/{ui,core,config}`; `pnpm new-product <name>` generator; infra naming `<org>-<product>-<env>`
 - **Env/config:** frontend config is publishable-only (`EXPO_PUBLIC_*`) in **committed per-env files** (`.env.development/.staging/.production` in each product's `app/`; gitignore allows these, still ignores `.env` + `.env.local`); EAS profiles / Vercel envs select them. Secrets live in **each platform's native store** (Fly secrets, EAS env, Vercel env, GH Actions) — setup codified in the generator checklist
@@ -121,6 +121,7 @@ that's a new architecture decision, not a default.
 │   ├── deploy-api.yml             # Fly: main→staging, tag <product>-api-v*→prod
 │   ├── eas-build.yml              # dispatch(product,profile) + tag <product>-app-v*
 │   ├── eas-update.yml             # OTA: main→staging channel; tag <product>-ota-v*→prod
+│   ├── e2e-nightly.yml            # Playwright full-stack suite (schedule + dispatch)
 │   └── electron-release.yml       # tag <product>-desktop-v* → 3-OS matrix
 ├── scripts/new-product.mjs        # generator (plain Node, zero deps)
 ├── packages/
@@ -263,6 +264,22 @@ changes via `eas-build.yml`).
 `desktop/package.json` version. All repo-specific values are clearly-marked placeholders
 until the real repo/org exists.
 
+## Testing strategy
+
+| Layer | Tool | Lives in | Runs |
+|---|---|---|---|
+| JS unit/component (ui components, core logic, product feature screens) | **Jest (jest-expo preset) + RNTL** — single runner for ALL JS tests, one templated config | `packages/ui`, `packages/core`, `products/*/app` (`__tests__/` beside source) | every PR (`turbo run test --affected`) |
+| API unit (services: pagination edges, `send_push()` w/ mocked httpx, JWT paths) | pytest | `products/*/api/tests` | every PR |
+| API integration (routers over HTTP: CRUD round-trips, problem+json shapes, 401s) | pytest + httpx against **real Postgres** (Supabase local in dev; postgres **service container** in CI), per-test transaction rollback — exercises UUIDv7 + real SQL | `products/*/api/tests` | every PR |
+| Contract (API ↔ generated client can't drift) | regen `openapi.json` + client → `git diff --exit-code` | CI step | every PR |
+| Web E2E (full stack: exported dist + API + Supabase local; signup → login → items CRUD → realtime invalidation) | Playwright | `products/*/app/e2e` | **nightly** (`e2e-nightly.yml`, also `workflow_dispatch`) + locally on demand |
+| Mobile E2E (login, tabs, theme toggle on simulator/dev build) | Maestro | `products/*/app/.maestro` | **local-only** for now; CI via EAS Workflows deferred |
+| Desktop | no separate E2E — same web bundle; `app://` shell gets a launch smoke in Phase 5; Playwright `_electron` only if shell logic grows | — | — |
+
+Mocking conventions: frontend tests mock at the **generated-client boundary** (never
+fetch); API unit tests mock external HTTP (Expo Push, Supabase broadcast) via httpx
+mock transport — integration tests hit the real DB, never mock the session.
+
 ## Phases (each independently verifiable)
 
 | # | Build | Verify |
@@ -274,7 +291,7 @@ until the real repo/org exists.
 | 5 | Desktop: main/preload, `app://` protocol, electron-builder.yml, updater (no-op w/o repo) | `turbo run build` + start → same screen in window; navigation works; API down → shell still launches; `electron-builder --dir` packs |
 | 6 | Supabase local + auth: per-product config.toml; core plumbing (session store, guards); `features/auth` login/signup screens + `(auth)`/`(tabs)` route guards; protected `/v1/me`; `core/storage.ts` + avatar upload demo on settings (direct-to-Storage) | `supabase start`; sign up through the template's login screen; guarded tabs redirect when signed out; bearer-token curl → user id; bad token → 401; avatar uploads and renders back from Storage |
 | 7 | Generator + stamp `demo` product | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously; `git grep -iw template products/demo` empty |
-| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + E2E harness: Playwright web smoke (login → items list, against exported dist) + one Maestro flow + docs/agent surface: root + product README.md, CLAUDE.md, `.claude/commands/` | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id sent by the client; Playwright smoke green in CI (push registration needs a dev build — Expo Go can't receive push tokens; verified later on real devices) |
+| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + E2E harness: Playwright suite (signup → login → items CRUD → realtime, against exported dist) wired into `e2e-nightly.yml` + one Maestro flow (local) + docs/agent surface: root + product README.md, CLAUDE.md, `.claude/commands/` | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id sent by the client; `e2e-nightly.yml` green via workflow_dispatch (push registration needs a dev build — Expo Go can't receive push tokens; verified later on real devices) |
 
 Each phase = one commit (or a few logical commits) on a feature branch.
 
