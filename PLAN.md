@@ -26,6 +26,9 @@ product to prove the generator.
 
 - **Monorepo:** pnpm workspaces + Turborepo 2.9 (`--affected`); mise pins Node 22 / pnpm 10 / Python 3.13 / uv
 - **Frontend:** Expo SDK 56 (RN 0.85) + react-native-web, managed + EAS; **NativeWind v4** (v5 is pre-release — do NOT use); Expo Router; TanStack Query + Zustand; per-platform overrides via `.ios/.android/.web/.native` extensions
+- **Design system:** **react-native-reusables** adopted INTO `packages/ui` (shadcn model: components are copied in and OWNED, not a black-box dep); cva variants + `className` escape hatch; **semantic CSS-variable tokens** (`--background`, `--primary`, …) with **light+dark from day 1** (runtime-switchable); per-product branding = each product overrides token VALUES, never component code
+- **Code sharing:** `packages/core` = plumbing only (supabase client factory, auth session store + route guards, query client **with cache persistence** — AsyncStorage native / localStorage web —, env, Sentry init); features are **product-local** (`app/features/<feature>/`, route files stay thin one-liners); **promote to `packages/*` on 2nd use** (documented convention)
+- **Template lifecycle:** stamped products are **snapshots** — divergence accepted, template kept thin, reusables pushed down into `packages/*`; shared packages **co-evolve** (`workspace:*`, breaking change = fix all consumers in same PR, CI `--affected` enforces); `_template` app is a **rich starter**: auth screens (login/signup on core plumbing), API-backed list screen, settings with theme/dark toggle, tab navigation
 - **Desktop:** Electron bundling the exported Expo web build; electron-builder + electron-updater (GitHub Releases)
 - **Backend (per product):** FastAPI (Pydantic v2), uv + Ruff, SQLModel + Alembic, Dockerized → Fly.io (staging + production apps)
 - **Topology (hybrid):** core data via FastAPI → Supabase Postgres (pooler 6543); Supabase Auth (FastAPI verifies JWTs); `supabase-js` on frontend ONLY for auth/Realtime/Storage uploads
@@ -62,6 +65,17 @@ product to prove the generator.
    builds in CI so it never rots. It uses the literal product name `template`; the
    generator whole-word-replaces `template` (kebab/Pascal/snake variants) in contents AND
    paths.
+8. **Theming mechanism is CSS variables, not tailwind values:** the shared tailwind
+   preset maps semantic color names to vars (`primary: "hsl(var(--primary))"`, …);
+   `packages/ui` ships the default light/dark theme blocks (CSS vars on web, NativeWind
+   `vars()` objects on native); each product overrides variable VALUES in its own theme
+   file/global.css. One set of components, per-product brand, runtime dark mode — and the
+   identical mechanism on all four targets.
+9. **Rich-starter inheritance instead of shared screens:** auth/login screens live in the
+   template's `app/features/auth/` (product-local), so every stamped product COPIES a
+   working auth UI it can freely restyle — reuse without coupling products to a shared
+   screens package. Only auth plumbing (session store, guards) is shared via
+   `packages/core`.
 
 ## Directory tree
 
@@ -83,10 +97,17 @@ product to prove the generator.
 ├── packages/
 │   ├── config/                    # @platform/config: eslint flat config, prettier.json,
 │   │   └── ...                    #   tailwind-preset.js (design tokens), tsconfig/{base,expo,node}.json
-│   ├── ui/                        # @platform/ui — NativeWind RN components, consumed AS SOURCE
-│   │   └── src/{index.ts,Button.tsx,Screen.tsx,Text.tsx}    # "main": "./src/index.ts", no build
-│   └── core/                      # @platform/core — supabase client factory, queryClient,
-│       └── src/{index.ts,supabase.ts,query.ts,env.ts,sentry.ts}
+│   ├── ui/                        # @platform/ui — react-native-reusables components (OWNED,
+│   │   ├── package.json           #   copied in via its CLI), consumed AS SOURCE, no build
+│   │   └── src/
+│   │       ├── index.ts
+│   │       ├── components/ui/     # button.tsx, text.tsx, input.tsx, card.tsx, ... (cva variants)
+│   │       └── lib/{utils.ts,     # cn() helper
+│   │                theme.ts}     # default light/dark themes: CSS vars (web) + vars() (native)
+│   └── core/                      # @platform/core — plumbing ONLY (no screens)
+│       └── src/{index.ts,supabase.ts,auth.ts,    # session store + route guards
+│                query.ts,                        # query client + cache persistence
+│                env.ts,sentry.ts}
 └── products/
     ├── _template/                 # WORKING product; name token = literal `template`
     │   ├── product.json           # {"name":"template","portIndex":0} generator metadata
@@ -96,8 +117,17 @@ product to prove the generator.
     │   │   ├── app.config.ts      # web.output "single", scheme, com.example.template,
     │   │   │                      #   extra.eas.projectId: "TODO-EAS-PROJECT-ID"
     │   │   ├── eas.json · metro.config.js · babel.config.js
-    │   │   ├── tailwind.config.js · global.css · vercel.json (SPA rewrite)
-    │   │   └── app/{_layout.tsx,index.tsx}      # providers; screen uses @platform/ui + API hook
+    │   │   ├── tailwind.config.js               # preset + PRODUCT TOKEN OVERRIDES (brand)
+    │   │   ├── global.css · theme.ts            # product's CSS-var values (light+dark)
+    │   │   ├── vercel.json                      # SPA rewrite
+    │   │   ├── features/                        # product-local screens & logic (rich starter)
+    │   │   │   ├── auth/                        # login/signup screens on core plumbing
+    │   │   │   ├── home/                        # list screen via generated API hooks
+    │   │   │   └── settings/                    # theme/dark-mode toggle
+    │   │   └── app/                             # expo-router routes — THIN one-liners
+    │   │       ├── _layout.tsx                  # theme + query(+persist) + auth providers
+    │   │       ├── (auth)/{login,signup}.tsx
+    │   │       └── (tabs)/{_layout,index,settings}.tsx
     │   ├── desktop/               # @platform/template-desktop
     │   │   ├── electron-builder.yml             # appId com.example.template.desktop;
     │   │   │                                    #   publish → <org>/template-desktop-releases
@@ -138,6 +168,13 @@ module.exports = withNativeWind(config, { input: "./global.css" });
 **tailwind.config.js:** presets `@platform/config/tailwind-preset`; content = app globs +
 `path.dirname(require.resolve("@platform/ui/package.json")) + "/src/**/*.{ts,tsx}"`
 (robust cross-package globs; `packages/ui` has NO tailwind config of its own).
+**Theming wiring:** the preset maps semantic colors to CSS vars
+(`primary: "hsl(var(--primary))"`, `background`, `foreground`, `muted`, `border`, …);
+`packages/ui/src/lib/theme.ts` exports default light/dark values (react-native-reusables
+convention) — web gets them as `:root`/`.dark` blocks in `global.css`, native via
+NativeWind `vars()` in the theme provider. A product rebrands by overriding variable
+values in its own `theme.ts`/`global.css`; component code is never forked. Pin
+react-native-reusables' `@rn-primitives/*` deps exactly like other pre-1.0 tools.
 
 **Electron main.ts essentials:** `protocol.registerSchemesAsPrivileged([{scheme:"app",
 privileges:{standard:true,secure:true,supportFetchAPI:true}}])`; `protocol.handle("app", ...)`
@@ -183,11 +220,11 @@ until the real repo/org exists.
 | # | Build | Verify |
 |---|---|---|
 | 1 | Root tooling: mise.toml, .npmrc, workspace+turbo+tsconfig, .gitignore, `packages/config` | `mise install && pnpm install && pnpm turbo run lint` (clean no-op) |
-| 2 | `packages/ui` + `packages/core` + `_template/app` (Router + NativeWind + shared Button screen) | dev server → styled button at `localhost:8081`; Expo Go on device; `turbo run export:web` + `npx serve dist`. **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55** |
+| 2 | `packages/ui`: adopt react-native-reusables (button/text/input/card) + theme infra (CSS vars, light/dark); `packages/core` (query+persist, env); `_template/app` shell: tabs, settings screen with working theme toggle | dev server → themed components at `localhost:8081`, dark toggle works; Expo Go on device; `turbo run export:web` + `npx serve dist`. **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55** |
 | 3 | `_template/api`: full layout, /healthz + /v1/hello, auth.py, db.py, Dockerfile, fly tomls, pytest | `turbo run dev --filter=*template-api` + `curl localhost:8000/healthz`; `turbo run test lint`; `docker build` |
-| 4 | Typegen: export_openapi.py, `api-client/` (hey-api), turbo wiring, app screen calls /v1/hello via generated hook | `turbo run build --filter=*template-app` shows openapi→client→app order; model change regenerates types; web renders API data |
+| 4 | Typegen: export_openapi.py, `api-client/` (hey-api), turbo wiring; `features/home` list screen renders /v1/hello via generated TanStack hook (cache-persisted) | `turbo run build --filter=*template-app` shows openapi→client→app order; model change regenerates types; web renders API data; reload shows cached data instantly |
 | 5 | Desktop: main/preload, `app://` protocol, electron-builder.yml, updater (no-op w/o repo) | `turbo run build` + start → same screen in window; navigation works; API down → shell still launches; `electron-builder --dir` packs |
-| 6 | Supabase local + auth: per-product config.toml, sign-in via core client, protected `/v1/me` | `supabase start`; sign up in web app; bearer-token curl → user id; bad token → 401 |
+| 6 | Supabase local + auth: per-product config.toml; core plumbing (session store, guards); `features/auth` login/signup screens + `(auth)`/`(tabs)` route guards; protected `/v1/me` | `supabase start`; sign up through the template's login screen; guarded tabs redirect when signed out; bearer-token curl → user id; bad token → 401 |
 | 7 | Generator + stamp `demo` product | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously; `git grep -iw template products/demo` empty |
 | 8 | CI/CD workflows + Sentry init + expo-notifications stub + README runbook | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check |
 
@@ -196,9 +233,11 @@ Each phase = one commit (or a few logical commits) on a feature branch.
 ## Verification (end-to-end, after Phase 8)
 
 1. `mise install && pnpm install && pnpm turbo run lint typecheck test build` — all green.
-2. One shared `@platform/ui` Button visibly identical on: web (`localhost:8081`), device
-   (Expo Go), desktop (Electron window) — all rendering data fetched from FastAPI via the
-   generated TanStack hook.
+2. One shared `@platform/ui` component set visibly identical on: web (`localhost:8081`),
+   device (Expo Go), desktop (Electron window) — all rendering data fetched from FastAPI
+   via the generated TanStack hook, with the dark-mode toggle re-theming every target via
+   the same CSS-variable mechanism, and the `demo` product showing different brand token
+   values than `template` with unmodified component code.
 3. Type-drift guard: edit a Pydantic response model → `turbo run openapi build` → committed
    client diff appears; skipping regen fails CI.
 4. Multi-product proof: `_template` and `demo` dev stacks (Expo + API + Supabase local)
