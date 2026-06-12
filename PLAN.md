@@ -44,7 +44,7 @@ product to prove the generator.
 - **Realtime (canonical pattern): broadcast-only** — tables stay RLS-locked; after mutations FastAPI broadcasts invalidation events on per-product channels (service-role HTTP call); clients refetch through the API. `packages/core` ships the subscribe-and-invalidate helper (wires channel events → TanStack invalidation). No Postgres-Changes subscriptions, no RLS holes, schema stays private
 - **Push notifications: full loop templated** — token registration in the app (expo-notifications), `/v1/push-tokens` endpoint + table (per user+device), `send_push()` service calling Expo's Push API via httpx
 - **Observability:** Sentry (already locked) + **structlog JSON logs** + `request_id` middleware in FastAPI; the API-client wrapper sends a generated `X-Request-Id` per request; Sentry events tagged with it on both sides → client→API→logs traceability
-- **Docs:** README runbook + generator-printed NEW_PRODUCT checklist; decision-record format (ADRs vs ARCHITECTURE.md) **deferred**
+- **Docs & agent surface:** README.md + **CLAUDE.md** + **slash commands** (`.claude/commands/`) at BOTH levels — monorepo root AND inside every product (authored once in `products/_template`, token-rewritten by the generator). Root CLAUDE.md = monorepo map + conventions (promote-on-2nd-use, naming, theming mechanism, broadcast-only realtime, problem+json, never-edit-generated-client) + gotchas (hoisted linker, pooler ports). Product CLAUDE.md = product structure, ports, infra names, the add-an-endpoint-end-to-end recipe (model→service→router→openapi→typegen→hook→screen). Root commands take a product arg (`/new-product`, `/affected`, `/typegen <product>`, `/release <product> <surface>`); product commands are product-scoped (`/dev`, `/typegen`, `/migrate`, `/add-feature`, `/release <surface>`) and apply when a session opens in the product dir (CLAUDE.md loads hierarchically; commands load from the session's project root). Decision-record format (ADRs vs ARCHITECTURE.md) **deferred**
 
 ## Key design rulings (architect-verified, June 2026)
 
@@ -89,6 +89,9 @@ product to prove the generator.
 
 ```
 <root>/
+├── README.md · CLAUDE.md          # monorepo runbook + agent context/conventions
+├── .claude/commands/              # /new-product, /affected, /typegen <product>,
+│                                  #   /release <product> <surface>
 ├── mise.toml                      # node 22, pnpm 10, python 3.13, uv
 ├── .npmrc                         # node-linker=hoisted
 ├── pnpm-workspace.yaml            # packages/*, products/*/{app,desktop,api,api-client}
@@ -121,6 +124,8 @@ product to prove the generator.
 │                env.ts,sentry.ts}                #   X-Request-Id injection
 └── products/
     ├── _template/                 # WORKING product; name token = literal `template`
+    │   ├── README.md · CLAUDE.md  # product runbook + agent context (token-rewritten)
+    │   ├── .claude/commands/      # /dev, /typegen, /migrate, /add-feature, /release <surface>
     │   ├── product.json           # {"name":"template","portIndex":0} generator metadata
     │   ├── .env.example           # server-side secrets template (api)
     │   ├── supabase/{config.toml,migrations/}   # project_id example-template; ports from portIndex
@@ -219,7 +224,7 @@ App sets client baseUrl from `EXPO_PUBLIC_API_URL` at startup.
 **Generator (`scripts/new-product.mjs`, plain Node):**
 1. Validate `/^[a-z][a-z0-9-]*$/`, refuse collisions; `portIndex` = max+1.
 2. Copy `_template` → `products/<name>` (skip node_modules/.venv/dist/.expo/release; keep uv.lock).
-3. Whole-word replace `template`/`Template`/`template_api` in contents AND paths → kebab/Pascal/snake variants (covers package names, slug/scheme/bundle ids, electron appId + releases repo, fly app names, pyproject module, alembic, supabase project_id).
+3. Whole-word replace `template`/`Template`/`template_api` in contents AND paths → kebab/Pascal/snake variants (covers package names, slug/scheme/bundle ids, electron appId + releases repo, fly app names, pyproject module, alembic, supabase project_id, and the product's README.md / CLAUDE.md / `.claude/commands/*` — ports and infra names in those docs come from `product.json` so they stay accurate).
 4. Ports from portIndex: API `8000+10i`; Supabase block `54321+100i` → products' local stacks coexist.
 5. Write `.env.example` + `product.json`; `pnpm install`.
 6. Print infra checklist: 2 Supabase projects (`<org>-<name>-stg|prod`), `fly apps create <org>-<name>-api-stg|prod` + secrets, Vercel project (root `products/<name>/app`, build via turbo filter, output `dist`, ignore step `npx turbo-ignore`), `eas init` → paste projectId, create `<name>-desktop-releases` repo + `GH_TOKEN`, 4 Sentry projects + DSNs, per-product GH Action secrets.
@@ -248,7 +253,7 @@ until the real repo/org exists.
 | 5 | Desktop: main/preload, `app://` protocol, electron-builder.yml, updater (no-op w/o repo) | `turbo run build` + start → same screen in window; navigation works; API down → shell still launches; `electron-builder --dir` packs |
 | 6 | Supabase local + auth: per-product config.toml; core plumbing (session store, guards); `features/auth` login/signup screens + `(auth)`/`(tabs)` route guards; protected `/v1/me` | `supabase start`; sign up through the template's login screen; guarded tabs redirect when signed out; bearer-token curl → user id; bad token → 401 |
 | 7 | Generator + stamp `demo` product | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously; `git grep -iw template products/demo` empty |
-| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + README runbook | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id sent by the client |
+| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + docs/agent surface: root + product README.md, CLAUDE.md, `.claude/commands/` | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id sent by the client |
 
 Each phase = one commit (or a few logical commits) on a feature branch.
 
