@@ -39,6 +39,11 @@ stamp one `demo` product to prove the generator.
 - **Cross-cutting:** Sentry (`@sentry/react-native` — NOT deprecated `sentry-expo`), Expo Push, Supabase Storage/CDN
 - **Multi-product:** `products/<name>/` consuming shared `packages/{ui,core,config}`; `pnpm new-product <name>` generator; infra naming `<org>-<product>-<env>`
 - **Git hooks (Lefthook, repo-level + affected-scoped):** `lefthook.yml` at root. **pre-commit** (fast, staged files only): Prettier + ESLint on staged JS/TS, Ruff check+format on staged `.py` (scoped to the touched product's api). **pre-push:** `turbo run typecheck test build --affected` + pytest for affected APIs — i.e. ONLY the product(s) actually touched run (plus all dependents when `packages/*` change, which is the co-evolve guard moved before the push). Builds are turbo-cached so repeat pushes are fast
+- **Design system workbench:** **Storybook** (web, via react-native-web) as a SINGLE shared workbench in `packages/ui` — stories colocated (`*.stories.tsx`), run with `pnpm --filter @platform/ui storybook`. Visual regression = Playwright screenshots of the static Storybook build (light+dark), wired into the nightly E2E run (baselines committed)
+- **API hardening (template defaults):** env-driven **CORS allowlist** (web origin + `app://` desktop + mobile), security-headers middleware, **slowapi** rate limiting (per-IP + per-user) — every product inherits sensible defaults
+- **Branding assets:** template ships placeholder icon/splash/favicon in `app/assets/brand/` from a single source; a regen script produces all sizes; the generator copies them and prints a "replace brand assets" checklist item
+- **Background/scheduled jobs:** **Fly scheduled machines** running a lightweight `tasks` module in the api (no queue infra); template ships one example (prune stale push tokens); heavier products can add a worker later
+- **Operational defaults:** per-product `seed.py` (local dev data) + **polyfactory** test factories; API versioning = additive-only within `/v1`, new prefix for breaking changes; template app ships a global **error boundary + offline/error UX**; root `pnpm bootstrap` (mise → install → supabase start) for one-command onboarding; `.env.example` documents every consumed var
 - **Env/config:** frontend config is publishable-only (`EXPO_PUBLIC_*`) in **committed per-env files** (`.env.development/.staging/.production` in each product's `app/`; gitignore allows these, still ignores `.env` + `.env.local`); EAS profiles / Vercel envs select them. Secrets live in **each platform's native store** (Fly secrets, EAS env, Vercel env, GH Actions) — setup codified in the generator checklist
 - **Releases:** trunk-based — `main` → staging auto (API deploy + web previews + **EAS Update OTA to staging channel**); tag `<product>-<surface>-v*` → that product's production (surface = api/app/desktop); mobile = **OTA for JS-only changes**, store builds only when native deps change
 - **DB conventions (template defaults):** **UUIDv7 PKs** (SQLModel base model); **RLS deny-all on every table** via the template's initial migration (the API's privileged role bypasses it; PostgREST/Realtime surface locked, opened per-table only where Realtime reads are wanted); schema changes ONLY via Alembic
@@ -114,7 +119,7 @@ that's a new architecture decision, not a default.
 ├── lefthook.yml                   # pre-commit: staged lint/format; pre-push: --affected
 ├── .npmrc                         # node-linker=hoisted
 ├── pnpm-workspace.yaml            # packages/*, products/*/{app,desktop,api,api-client}
-├── package.json                   # scripts: new-product; devDeps: turbo, prettier
+├── package.json                   # scripts: new-product, bootstrap; devDeps: turbo, prettier, lefthook
 ├── turbo.json                     # task graph (see below)
 ├── tsconfig.base.json             # strict, moduleResolution bundler, noEmit
 ├── .gitignore
@@ -123,7 +128,7 @@ that's a new architecture decision, not a default.
 │   ├── deploy-api.yml             # Fly: main→staging, tag <product>-api-v*→prod
 │   ├── eas-build.yml              # dispatch(product,profile) + tag <product>-app-v*
 │   ├── eas-update.yml             # OTA: main→staging channel; tag <product>-ota-v*→prod
-│   ├── e2e-nightly.yml            # Playwright full-stack suite (schedule + dispatch)
+│   ├── e2e-nightly.yml            # Playwright E2E + Storybook visual regression (schedule)
 │   └── electron-release.yml       # tag <product>-desktop-v* → 3-OS matrix
 ├── scripts/new-product.mjs        # generator (plain Node, zero deps)
 ├── packages/
@@ -131,9 +136,10 @@ that's a new architecture decision, not a default.
 │   │   └── ...                    #   tailwind-preset.js (design tokens), tsconfig/{base,expo,node}.json
 │   ├── ui/                        # @platform/ui — react-native-reusables components (OWNED,
 │   │   ├── package.json           #   copied in via its CLI), consumed AS SOURCE, no build
+│   │   ├── .storybook/            # SHARED design-system workbench (web/react-native-web)
 │   │   └── src/
 │   │       ├── index.ts
-│   │       ├── components/ui/     # button.tsx, text.tsx, input.tsx, card.tsx, ... (cva variants)
+│   │       ├── components/ui/     # button.tsx, text.tsx, ... + *.stories.tsx colocated
 │   │       └── lib/{utils.ts,     # cn() helper
 │   │                theme.ts}     # default light/dark themes: CSS vars (web) + vars() (native)
 │   └── core/                      # @platform/core — plumbing ONLY (no screens)
@@ -154,6 +160,7 @@ that's a new architecture decision, not a default.
     │   ├── app/                   # @platform/template-app (iOS+Android+WEB)
     │   │   ├── app.config.ts      # web.output "single", scheme, com.example.template,
     │   │   │                      #   extra.eas.projectId: "TODO-EAS-PROJECT-ID"
+    │   │   ├── assets/brand/      # icon/splash/favicon (placeholders) + source + regen script
     │   │   ├── .env.development · .env.staging · .env.production   # committed, publishable only
     │   │   ├── eas.json           # build profiles + update channels (staging/production)
     │   │   ├── metro.config.js · babel.config.js
@@ -168,6 +175,7 @@ that's a new architecture decision, not a default.
     │   │   │   └── settings/                    # theme/dark-mode toggle
     │   │   └── app/                             # expo-router routes — THIN one-liners
     │   │       ├── _layout.tsx                  # theme + query(+persist) + auth providers
+    │   │       │                                #   + global error boundary / offline UX
     │   │       ├── (auth)/{login,signup}.tsx
     │   │       └── (tabs)/{_layout,index,settings}.tsx
     │   ├── desktop/               # @platform/template-desktop
@@ -182,13 +190,17 @@ that's a new architecture decision, not a default.
     │   │   ├── alembic.ini · alembic/{env.py,versions/}   # initial migration incl. RLS deny-all
     │   │   ├── src/template_api/{main.py,settings.py,auth.py,db.py,
     │   │   │                     middleware.py,           # request_id + structlog binding
+    │   │   │                     security.py,             # CORS allowlist, headers, slowapi
     │   │   │                     models.py,               # UUIDv7 base model; push_tokens
     │   │   │                     errors.py,               # problem+json handlers
     │   │   │                     pagination.py,           # cursor pagination helpers
     │   │   │                     routers/{hello,me,items,push}.py,
     │   │   │                     services/{items,push,realtime}.py,  # logic; send_push();
+    │   │   │                     tasks.py,                # scheduled jobs (Fly machines)
+    │   │   │                     seed.py,                 # local dev seed data
     │   │   │                     export_openapi.py}       #   broadcast invalidation
-    │   │   └── tests/{test_hello.py,test_auth.py,test_items.py,test_push.py}
+    │   │   └── tests/{conftest.py,                        # polyfactory factories, db fixture
+    │   │             test_hello.py,test_auth.py,test_items.py,test_push.py}
     │   └── api-client/            # @platform/template-api-client (GENERATED, committed)
     │       ├── openapi-ts.config.ts             # input ../api/openapi.json
     │       └── src/                             # hey-api output: sdk/types/tanstack hooks
@@ -237,7 +249,7 @@ algs ES256/RS256; HS256 local fallback. Expose `CurrentUser` dependency.
 **Dockerfile:** multi-stage `ghcr.io/astral-sh/uv` (`uv sync --frozen --no-dev` → slim runtime).
 Python deps: fastapi, uvicorn[standard], pydantic-settings, sqlmodel,
 sqlalchemy[postgresql-psycopg], psycopg[binary], alembic, pyjwt[crypto], httpx,
-sentry-sdk[fastapi], structlog; dev: pytest, ruff.
+sentry-sdk[fastapi], structlog, slowapi; dev: pytest, ruff, polyfactory.
 
 **Typegen:** `@hey-api/openapi-ts` pinned exact + `@hey-api/client-fetch` + TanStack Query
 plugin (generates `queryOptions`/typed SDK — beats openapi-typescript+openapi-fetch which
@@ -274,6 +286,7 @@ until the real repo/org exists.
 | API unit (services: pagination edges, `send_push()` w/ mocked httpx, JWT paths) | pytest | `products/*/api/tests` | every PR |
 | API integration (routers over HTTP: CRUD round-trips, problem+json shapes, 401s) | pytest + httpx against **real Postgres** (Supabase local in dev; postgres **service container** in CI), per-test transaction rollback — exercises UUIDv7 + real SQL | `products/*/api/tests` | every PR |
 | Contract (API ↔ generated client can't drift) | regen `openapi.json` + client → `git diff --exit-code` | CI step | every PR |
+| Visual regression (every `@platform/ui` component, light+dark) | Playwright screenshots of the static **Storybook** build, committed baselines | `packages/ui/.storybook` | **nightly** + locally on demand |
 | Web E2E (full stack: exported dist + API + Supabase local; signup → login → items CRUD → realtime invalidation) | Playwright | `products/*/app/e2e` | **nightly** (`e2e-nightly.yml`, also `workflow_dispatch`) + locally on demand |
 | Mobile E2E (login, tabs, theme toggle on simulator/dev build) | Maestro | `products/*/app/.maestro` | **local-only** for now; CI via EAS Workflows deferred |
 | Desktop | no separate E2E — same web bundle; `app://` shell gets a launch smoke in Phase 5; Playwright `_electron` only if shell logic grows | — | — |
@@ -287,13 +300,13 @@ mock transport — integration tests hit the real DB, never mock the session.
 | # | Build | Verify |
 |---|---|---|
 | 1 | Root tooling: mise.toml, .npmrc, workspace+turbo+tsconfig, .gitignore, `packages/config`, lefthook.yml (hooks install via pnpm prepare) | `mise install && pnpm install && pnpm turbo run lint` (clean no-op); a commit triggers staged lint; a push triggers the affected gate |
-| 2 | `packages/ui`: adopt react-native-reusables (button/text/input/card) + theme infra (CSS vars, light/dark); `packages/core` (query+persist, env); `_template/app` shell: tabs, settings screen with working theme toggle; unit/component harness (Jest + RNTL) with a first Button test | dev server → themed components at `localhost:8081`, dark toggle works; Expo Go on device; `turbo run export:web` + `npx serve dist`; `turbo run test` runs the RNTL test. **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55** |
-| 3 | `_template/api`: full layout — routers→services, UUIDv7 base model, problem+json handlers, cursor pagination, /healthz + /v1/hello + /v1/items CRUD, auth.py, db.py, initial Alembic migration (incl. RLS deny-all), Dockerfile, fly tomls, pytest | `turbo run dev --filter=*template-api` + `curl localhost:8000/healthz`; items CRUD + paging via curl; error responses are problem+json; `turbo run test lint`; `docker build` |
+| 2 | `packages/ui`: adopt react-native-reusables (button/text/input/card) + theme infra (CSS vars, light/dark) + **Storybook workbench** with stories; `packages/core` (query+persist, env); `_template/app` shell: tabs, settings screen with working theme toggle; unit/component harness (Jest + RNTL) with a first Button test | dev server → themed components at `localhost:8081`, dark toggle works; `pnpm --filter @platform/ui storybook` renders the gallery; Expo Go on device; `turbo run export:web` + `npx serve dist`; `turbo run test` runs the RNTL test. **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55** |
+| 3 | `_template/api`: full layout — routers→services, UUIDv7 base model, problem+json, cursor pagination, security.py (CORS/headers/slowapi), middleware, /healthz + /v1/hello + /v1/items CRUD, auth.py, db.py, initial Alembic migration (incl. RLS deny-all), seed.py, polyfactory factories, Dockerfile, fly tomls, pytest (real Postgres) | `turbo run dev --filter=*template-api` + `curl localhost:8000/healthz`; items CRUD + paging; problem+json errors; rate limit returns 429; CORS preflight from web origin passes; `seed.py` populates local DB; `turbo run test lint` (against pg service); `docker build` |
 | 4 | Typegen: export_openapi.py, `api-client/` (hey-api), turbo wiring; `features/home` list screen renders the cursor-paginated /v1/items via generated `useInfiniteQuery` hook (cache-persisted) | `turbo run build --filter=*template-app` shows openapi→client→app order; model change regenerates types; web renders paginated API data; reload shows cached data instantly |
 | 5 | Desktop: main/preload, `app://` protocol, electron-builder.yml, updater (no-op w/o repo) | `turbo run build` + start → same screen in window; navigation works; API down → shell still launches; `electron-builder --dir` packs |
 | 6 | Supabase local + auth: per-product config.toml; core plumbing (session store, guards); `features/auth` login/signup screens + `(auth)`/`(tabs)` route guards; protected `/v1/me`; `core/storage.ts` + avatar upload demo on settings (direct-to-Storage) | `supabase start`; sign up through the template's login screen; guarded tabs redirect when signed out; bearer-token curl → user id; bad token → 401; avatar uploads and renders back from Storage |
-| 7 | Generator + stamp `demo` product | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously; `git grep -iw template products/demo` empty |
-| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + E2E harness: Playwright suite (signup → login → items CRUD → realtime, against exported dist) wired into `e2e-nightly.yml` + one Maestro flow (local) + docs/agent surface: root + product README.md, CLAUDE.md, `.claude/commands/` | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id sent by the client; `e2e-nightly.yml` green via workflow_dispatch (push registration needs a dev build — Expo Go can't receive push tokens; verified later on real devices) |
+| 7 | Generator + stamp `demo` product (brand-asset placeholders + regen script; `pnpm bootstrap`) | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously via `pnpm bootstrap`; demo carries its own placeholder brand assets; `git grep -iw template products/demo` empty |
+| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + scheduled job (Fly machine running tasks.py prune) + E2E harness: Playwright suite (signup → login → items CRUD → realtime) + Storybook visual-regression baselines, both wired into `e2e-nightly.yml` + one Maestro flow (local) + docs/agent surface: root + product README.md, CLAUDE.md, `.claude/commands/` | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id; `e2e-nightly.yml` green via workflow_dispatch (E2E + visual regression); scheduled task runs via `fly machine run` (push registration needs a dev build — Expo Go can't receive push tokens; verified later on real devices) |
 
 Each phase = one commit (or a few logical commits) on a feature branch.
 
