@@ -41,6 +41,10 @@ product to prove the generator.
 - **Releases:** trunk-based — `main` → staging auto (API deploy + web previews + **EAS Update OTA to staging channel**); tag `<product>-<surface>-v*` → that product's production (surface = api/app/desktop); mobile = **OTA for JS-only changes**, store builds only when native deps change
 - **DB conventions (template defaults):** **UUIDv7 PKs** (SQLModel base model); **RLS deny-all on every table** via the template's initial migration (the API's privileged role bypasses it; PostgREST/Realtime surface locked, opened per-table only where Realtime reads are wanted); schema changes ONLY via Alembic
 - **API conventions (template defaults):** thin **routers → services** (services take a session, hold business logic); **RFC 9457 problem+json** error contract (typed into OpenAPI → typed in the generated client); **cursor pagination** (`useInfiniteQuery`-ready); template ships `hello` + `me` + one `items` CRUD example in this shape
+- **Realtime (canonical pattern): broadcast-only** — tables stay RLS-locked; after mutations FastAPI broadcasts invalidation events on per-product channels (service-role HTTP call); clients refetch through the API. `packages/core` ships the subscribe-and-invalidate helper (wires channel events → TanStack invalidation). No Postgres-Changes subscriptions, no RLS holes, schema stays private
+- **Push notifications: full loop templated** — token registration in the app (expo-notifications), `/v1/push-tokens` endpoint + table (per user+device), `send_push()` service calling Expo's Push API via httpx
+- **Observability:** Sentry (already locked) + **structlog JSON logs** + `request_id` middleware in FastAPI; the API-client wrapper sends a generated `X-Request-Id` per request; Sentry events tagged with it on both sides → client→API→logs traceability
+- **Docs:** README runbook + generator-printed NEW_PRODUCT checklist; decision-record format (ADRs vs ARCHITECTURE.md) **deferred**
 
 ## Key design rulings (architect-verified, June 2026)
 
@@ -111,7 +115,10 @@ product to prove the generator.
 │   └── core/                      # @platform/core — plumbing ONLY (no screens)
 │       └── src/{index.ts,supabase.ts,auth.ts,    # session store + route guards
 │                query.ts,                        # query client + cache persistence
-│                env.ts,sentry.ts}
+│                realtime.ts,                     # subscribe-and-invalidate helper
+│                notifications.ts,                # push-token registration helper
+│                api.ts,                          # client wrapper: baseUrl, auth header,
+│                env.ts,sentry.ts}                #   X-Request-Id injection
 └── products/
     ├── _template/                 # WORKING product; name token = literal `template`
     │   ├── product.json           # {"name":"template","portIndex":0} generator metadata
@@ -145,12 +152,13 @@ product to prove the generator.
     │   │   ├── fly.production.toml
     │   │   ├── alembic.ini · alembic/{env.py,versions/}   # initial migration incl. RLS deny-all
     │   │   ├── src/template_api/{main.py,settings.py,auth.py,db.py,
-    │   │   │                     models.py,               # UUIDv7 base model
+    │   │   │                     middleware.py,           # request_id + structlog binding
+    │   │   │                     models.py,               # UUIDv7 base model; push_tokens
     │   │   │                     errors.py,               # problem+json handlers
     │   │   │                     pagination.py,           # cursor pagination helpers
-    │   │   │                     routers/{hello,me,items}.py,
-    │   │   │                     services/items.py,       # business logic, takes session
-    │   │   │                     export_openapi.py}
+    │   │   │                     routers/{hello,me,items,push}.py,
+    │   │   │                     services/{items,push,realtime}.py,  # logic; send_push();
+    │   │   │                     export_openapi.py}       #   broadcast invalidation
     │   │   └── tests/{test_hello.py,test_auth.py,test_items.py}
     │   └── api-client/            # @platform/template-api-client (GENERATED, committed)
     │       ├── openapi-ts.config.ts             # input ../api/openapi.json
@@ -200,7 +208,7 @@ algs ES256/RS256; HS256 local fallback. Expose `CurrentUser` dependency.
 **Dockerfile:** multi-stage `ghcr.io/astral-sh/uv` (`uv sync --frozen --no-dev` → slim runtime).
 Python deps: fastapi, uvicorn[standard], pydantic-settings, sqlmodel,
 sqlalchemy[postgresql-psycopg], psycopg[binary], alembic, pyjwt[crypto], httpx,
-sentry-sdk[fastapi]; dev: pytest, ruff.
+sentry-sdk[fastapi], structlog; dev: pytest, ruff.
 
 **Typegen:** `@hey-api/openapi-ts` pinned exact + `@hey-api/client-fetch` + TanStack Query
 plugin (generates `queryOptions`/typed SDK — beats openapi-typescript+openapi-fetch which
@@ -240,7 +248,7 @@ until the real repo/org exists.
 | 5 | Desktop: main/preload, `app://` protocol, electron-builder.yml, updater (no-op w/o repo) | `turbo run build` + start → same screen in window; navigation works; API down → shell still launches; `electron-builder --dir` packs |
 | 6 | Supabase local + auth: per-product config.toml; core plumbing (session store, guards); `features/auth` login/signup screens + `(auth)`/`(tabs)` route guards; protected `/v1/me` | `supabase start`; sign up through the template's login screen; guarded tabs redirect when signed out; bearer-token curl → user id; bad token → 401 |
 | 7 | Generator + stamp `demo` product | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously; `git grep -iw template products/demo` empty |
-| 8 | CI/CD workflows + Sentry init + expo-notifications stub + README runbook | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check |
+| 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + README runbook | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id sent by the client |
 
 Each phase = one commit (or a few logical commits) on a feature branch.
 
