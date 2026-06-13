@@ -46,7 +46,7 @@ Each bullet is independently testable (see **Verification** for the exact comman
 
 ### Step 1 — `mise.toml` (pin the toolchain)
 
-**Files:** `/home/user/creator-clubs/mise.toml`
+**Files:** `mise.toml`
 
 **Contents:**
 
@@ -84,7 +84,7 @@ mise current            # sanity-check the resolved versions
 
 ### Step 2 — `.npmrc` (pnpm linker for Expo compatibility)
 
-**Files:** `/home/user/creator-clubs/.npmrc`
+**Files:** `.npmrc`
 
 **Contents:**
 
@@ -118,7 +118,7 @@ prefer-frozen-lockfile=true
 
 ### Step 3 — `pnpm-workspace.yaml` (workspace globs)
 
-**Files:** `/home/user/creator-clubs/pnpm-workspace.yaml`
+**Files:** `pnpm-workspace.yaml`
 
 **Contents:**
 
@@ -146,13 +146,13 @@ packages:
 
 ### Step 4 — root `package.json` (scripts + shared devDeps)
 
-**Files:** `/home/user/creator-clubs/package.json`
+**Files:** `package.json`
 
 **Contents:**
 
 ```json
 {
-  "name": "creator-clubs",
+  "name": "platform-template",
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "engines": {
@@ -192,13 +192,13 @@ pnpm install            # installs devDeps, links @platform/config, runs `prepar
 - `scripts: new-product, bootstrap` and `devDeps: turbo, prettier, lefthook` come verbatim from the Directory-tree annotation for `package.json`. `bootstrap` = "mise → install → supabase start" (PLAN "Operational defaults"); the `supabase:start` per-package script is `--if-present` so it's a no-op until products exist.
 - `@platform/config` as a `workspace:*` devDep makes the shared ESLint/Prettier/tsconfig presets resolvable from the root.
 
-⚠️ **OPEN / TO CONFIRM:** Exact dep versions. PLAN.md pins **Turborepo 2.9** (so `turbo` is set to `2.9.0` — confirm the exact 2.9.x patch at install time). Prettier/lefthook/typescript patch versions are not pinned in PLAN; the `^` ranges above are reasonable defaults — replace with whatever the lockfile resolves and pin if stricter reproducibility is wanted. `"name": "creator-clubs"` matches the repo dir, but note PLAN's naming convention warns the **monorepo name never drives app/infra ids** (those come from product names) — so this name is cosmetic only.
+⚠️ **OPEN / TO CONFIRM:** Exact dep versions. PLAN.md pins **Turborepo 2.9** (so `turbo` is set to `2.9.0` — confirm the exact 2.9.x patch at install time). Prettier/lefthook/typescript patch versions are not pinned in PLAN; the `^` ranges above are reasonable defaults — replace with whatever the lockfile resolves and pin if stricter reproducibility is wanted. `"name": "platform-template"` matches the repo dir, but note PLAN's naming convention warns the **monorepo name never drives app/infra ids** (those come from product names) — so this name is cosmetic only.
 
 ---
 
 ### Step 5 — `turbo.json` (Turborepo 2.9 task graph)
 
-**Files:** `/home/user/creator-clubs/turbo.json`
+**Files:** `turbo.json`
 
 **Contents:**
 
@@ -257,7 +257,7 @@ pnpm turbo run lint     # should be a clean no-op while only packages/config exi
 
 ### Step 6 — `tsconfig.base.json` (strict TS base)
 
-**Files:** `/home/user/creator-clubs/tsconfig.base.json`
+**Files:** `tsconfig.base.json`
 
 **Contents:**
 
@@ -303,7 +303,7 @@ This is the one real workspace created in Phase 1. It bundles ESLint flat config
 
 #### Step 7a — `packages/config/package.json`
 
-**Files:** `/home/user/creator-clubs/packages/config/package.json`
+**Files:** `packages/config/package.json`
 
 **Contents:**
 
@@ -338,7 +338,7 @@ This is the one real workspace created in Phase 1. It bundles ESLint flat config
 
 #### Step 7b — `packages/config/eslint.config.js` (ESLint flat config)
 
-**Files:** `/home/user/creator-clubs/packages/config/eslint.config.js`
+**Files:** `packages/config/eslint.config.js`
 
 **Contents:**
 
@@ -390,7 +390,7 @@ export default tseslint.config(
 
 #### Step 7c — `packages/config/prettier.json`
 
-**Files:** `/home/user/creator-clubs/packages/config/prettier.json`
+**Files:** `packages/config/prettier.json`
 
 **Contents:**
 
@@ -411,7 +411,7 @@ export default tseslint.config(
 
 #### Step 7d — `packages/config/tailwind-preset.js` (semantic tokens → CSS vars)
 
-**Files:** `/home/user/creator-clubs/packages/config/tailwind-preset.js`
+**Files:** `packages/config/tailwind-preset.js`
 
 **Contents:**
 
@@ -482,9 +482,9 @@ module.exports = {
 #### Step 7e — `packages/config/tsconfig/{base,expo,node}.json`
 
 **Files:**
-- `/home/user/creator-clubs/packages/config/tsconfig/base.json`
-- `/home/user/creator-clubs/packages/config/tsconfig/expo.json`
-- `/home/user/creator-clubs/packages/config/tsconfig/node.json`
+- `packages/config/tsconfig/base.json`
+- `packages/config/tsconfig/expo.json`
+- `packages/config/tsconfig/node.json`
 
 **Contents — `tsconfig/base.json`:**
 
@@ -544,7 +544,7 @@ pnpm --filter @platform/config exec ls -R      # confirm files are present & res
 
 ### Step 8 — `.gitignore` (ignore artifacts, KEEP per-env .env files)
 
-**Files:** `/home/user/creator-clubs/.gitignore`
+**Files:** `.gitignore`
 
 **Contents:**
 
@@ -597,7 +597,7 @@ release/
 
 ```bash
 # Verify the allow/ignore boundary with throwaway files:
-mkdir -p /tmp/cc-envtest && cd /home/user/creator-clubs
+mkdir -p /tmp/envtest && cd .
 touch .env .env.local .env.development .env.staging .env.production
 git check-ignore -v .env .env.local .env.development .env.staging .env.production || true
 rm -f .env .env.local .env.development .env.staging .env.production
@@ -611,7 +611,7 @@ Expected: `.env` and `.env.local` are reported ignored; the three per-env files 
 
 ### Step 9 — `lefthook.yml` (git hooks: staged pre-commit, affected pre-push)
 
-**Files:** `/home/user/creator-clubs/lefthook.yml`
+**Files:** `lefthook.yml`
 
 **Contents:**
 
