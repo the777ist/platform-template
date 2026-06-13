@@ -39,7 +39,9 @@ stamp one `demo` product to prove the generator.
 - **Cross-cutting:** Sentry (`@sentry/react-native` — NOT deprecated `sentry-expo`), Expo Push, Supabase Storage/CDN
 - **Multi-product:** `products/<name>/` consuming shared `packages/{ui,core,config}`; `pnpm new-product <name>` generator; infra naming `<org>-<product>-<env>`
 - **Git hooks (Lefthook, repo-level + affected-scoped):** `lefthook.yml` at root. **pre-commit** (fast, staged files only): Prettier + ESLint on staged JS/TS, Ruff check+format on staged `.py` (scoped to the touched product's api). **pre-push:** `turbo run typecheck test build --affected` + (for affected APIs) pyright strict + pytest — i.e. ONLY the product(s) actually touched run (plus all dependents when `packages/*` change, which is the co-evolve guard moved before the push). Builds are turbo-cached so repeat pushes are fast
-- **Design system workbench:** **Storybook** (web, via react-native-web) as a SINGLE shared workbench in `packages/ui` — stories colocated (`*.stories.tsx`), run with `pnpm --filter @platform/ui storybook`. Visual regression = Playwright screenshots of the static Storybook build (light+dark), wired into the nightly E2E run (baselines committed)
+- **Design system workbench:** **Storybook** (web, **`@storybook/react-native-web-vite`** — renders the SAME RN components through react-native-web that ship to every target; NOT on-device `@storybook/react-native`) as a SINGLE shared workbench in `packages/ui` — stories colocated (`*.stories.tsx`, one story per cva variant), run with `pnpm --filter @platform/ui storybook`. Global decorator imports `global.css` + wraps in the theme provider so `className`/NativeWind utilities resolve identically to the app; toolbar exposes a **light/dark toggle AND a brand switcher** (template ↔ demo) that swaps the active CSS-var set — so the workbench is also the live preview surface for the Figma token modes (below) and the demo-able "one component set, different brand" moment. Visual regression = Playwright screenshots of the static Storybook build (iterates the stories `index.json`, each story × {light,dark}), committed baselines, wired into the nightly E2E run. **Chromatic deliberately declined** — self-hosted Playwright keeps VR free + in-repo, consistent with the no-paid-SaaS stance elsewhere
+- **Component lifecycle (shadcn-ownership two-tier):** Tier-1 **owned primitives** in `packages/ui/src/components/ui/` (react-native-reusables components copied in via its CLI, then OWNED as source); Tier-2 **product compositions** start product-local in `app/features/<feature>/components/` and **promote down into `packages/ui` on 2nd use**. Primitives consume **semantic tokens ONLY** (`bg-primary`, never hex/brand values) so one set works on all targets + all products. Fixed **add-a-component recipe** (documented in `packages/ui` CLAUDE.md, enforced like the API's `model→service→schema→router`): `cli-add (or author) → pin @rn-primitives/* exact → write *.stories.tsx (one per variant) → write *.figma.tsx Code Connect map → export from index.ts → commit VR baseline (light+dark)`. Exposed as a `/add-component` command
+- **Figma bridge (design ↔ code, three planes):** (1) **Tokens** — a Figma Variables file is the source of truth for token VALUES: `primitives` collection (raw scale) + `semantic` collection (`--primary`, `--background`, `--muted`, …) whose **modes = light/dark × brand (template/demo)**, mapping 1:1 onto each product's `theme.ts`/`global.css`. A token-export script (Figma REST Variables API → Style Dictionary) regenerates the CSS-var values per product — a brand change in Figma rebrands a product with ZERO component edits, the design-side mirror of the locked theming mechanism. (2) **Components** — **Code Connect** `*.figma.tsx` files colocated next to each `packages/ui` component map Figma component props → cva variants, so `get_design_context` returns real `@platform/ui` components, not generic JSX. (3) **Screens** — with (1)+(2) wired, scaffolding a `features/<x>` screen from a Figma frame yields on-system code (owned components + semantic tokens, no one-off hex). Figma official MCP server drives all three
 - **API hardening (template defaults):** env-driven **CORS allowlist** (web origin + `app://` desktop + mobile), security-headers middleware, **slowapi** rate limiting (per-IP + per-user) — every product inherits sensible defaults
 - **Branding assets:** template ships placeholder icon/splash/favicon in `app/assets/brand/` from a single source; a regen script produces all sizes; the generator copies them and prints a "replace brand assets" checklist item
 - **Background/scheduled jobs:** **Fly scheduled machines** running a lightweight `tasks` module in the api (no queue infra); template ships one example (prune stale push tokens); heavier products can add a worker later
@@ -51,7 +53,7 @@ stamp one `demo` product to prove the generator.
 - **Realtime (canonical pattern): broadcast-only** — tables stay RLS-locked; after mutations FastAPI broadcasts invalidation events on per-product channels (service-role HTTP call); clients refetch through the API. `packages/core` ships the subscribe-and-invalidate helper (wires channel events → TanStack invalidation). No Postgres-Changes subscriptions, no RLS holes, schema stays private
 - **Push notifications: full loop templated** — token registration in the app (expo-notifications), `/v1/push-tokens` endpoint + table (per user+device), `send_push()` service calling Expo's Push API via httpx
 - **Observability:** Sentry (already locked) + **structlog JSON logs** + `request_id` middleware in FastAPI; the API-client wrapper sends a generated `X-Request-Id` per request; Sentry events tagged with it on both sides → client→API→logs traceability
-- **Docs & agent surface:** README.md + **CLAUDE.md** + **slash commands** (`.claude/commands/`) at BOTH levels — monorepo root AND inside every product (authored once in `products/_template`, token-rewritten by the generator). Root CLAUDE.md = monorepo map + conventions (promote-on-2nd-use, naming, theming mechanism, broadcast-only realtime, problem+json, never-edit-generated-client) + gotchas (hoisted linker, pooler ports). Product CLAUDE.md = product structure, ports, infra names, the add-an-endpoint-end-to-end recipe (model→service→schema→router→openapi→typegen→hook→screen) + the strict-OOP/strict-typing/DTO-separation rules. Root commands take a product arg (`/new-product`, `/affected`, `/typegen <product>`, `/release <product> <surface>`); product commands are product-scoped (`/dev`, `/typegen`, `/migrate`, `/add-feature`, `/release <surface>`) and apply when a session opens in the product dir (CLAUDE.md loads hierarchically; commands load from the session's project root). Decision-record format (ADRs vs ARCHITECTURE.md) **deferred**
+- **Docs & agent surface:** README.md + **CLAUDE.md** + **slash commands** (`.claude/commands/`) at BOTH levels — monorepo root AND inside every product (authored once in `products/_template`, token-rewritten by the generator). Root CLAUDE.md = monorepo map + conventions (promote-on-2nd-use, naming, theming mechanism, broadcast-only realtime, problem+json, never-edit-generated-client) + gotchas (hoisted linker, pooler ports). Product CLAUDE.md = product structure, ports, infra names, the add-an-endpoint-end-to-end recipe (model→service→schema→router→openapi→typegen→hook→screen) + the strict-OOP/strict-typing/DTO-separation rules. Root commands take a product arg (`/new-product`, `/affected`, `/typegen <product>`, `/release <product> <surface>`) except `/add-component <name>` (operates on shared `packages/ui`: runs the add-a-component recipe — cli-add, story, Code Connect map, export, baseline) and `/sync-tokens` (runs `figma-tokens.mjs`); product commands are product-scoped (`/dev`, `/typegen`, `/migrate`, `/add-feature`, `/release <surface>`) and apply when a session opens in the product dir (CLAUDE.md loads hierarchically; commands load from the session's project root). Decision-record format (ADRs vs ARCHITECTURE.md) **deferred**
 
 ## Key design rulings (architect-verified, June 2026)
 
@@ -98,6 +100,14 @@ stamp one `demo` product to prove the generator.
     CLAUDE.md and the thing AI agents follow verbatim. No repository layer (services query
     directly); DTOs (`schemas/`) are the ONLY thing crossing the HTTP boundary, SQLModel
     tables never are. Avoid full-DDD ceremony unless a product earns it.
+11. **Figma modes ARE the per-product brand modes:** the locked code-side theming
+    mechanism (semantic CSS vars, per-product = override values) has an exact Figma-side
+    mirror — a `semantic` Variables collection whose modes are light/dark × brand. So Figma
+    is not bolted on; each product's `theme.ts` is the export of one Figma brand mode, and
+    the Storybook brand switcher previews those same modes. One token contract spans design,
+    workbench, and all four runtime targets. The token-export script is one-directional
+    (Figma → code, committed) to keep generated theme files reviewable; Code Connect maps
+    are the only design artifacts that live in-repo as source (`*.figma.tsx`).
 
 ## Package management model
 
@@ -121,7 +131,7 @@ that's a new architecture decision, not a default.
 <root>/
 ├── README.md · CLAUDE.md          # monorepo runbook + agent context/conventions
 ├── .claude/commands/              # /new-product, /affected, /typegen <product>,
-│                                  #   /release <product> <surface>
+│                                  #   /release <product> <surface>, /add-component, /sync-tokens
 ├── mise.toml                      # node 22, pnpm 10, python 3.13, uv
 ├── lefthook.yml                   # pre-commit: staged lint/format; pre-push: --affected
 ├── .npmrc                         # node-linker=hoisted
@@ -138,15 +148,22 @@ that's a new architecture decision, not a default.
 │   ├── e2e-nightly.yml            # Playwright E2E + Storybook visual regression (schedule)
 │   └── electron-release.yml       # tag <product>-desktop-v* → 3-OS matrix
 ├── scripts/new-product.mjs        # generator (plain Node, zero deps)
+├── scripts/figma-tokens.mjs       # Figma Variables API → Style Dictionary → CSS-var theme
+│                                  #   files (one-way, committed); reads figma.config.json
+├── figma.config.json              # fileKey + variable-collection → product mode mapping
+├── .figma/                        # Code Connect CLI config (publish *.figma.tsx maps)
 ├── packages/
 │   ├── config/                    # @platform/config: eslint flat config, prettier.json,
 │   │   └── ...                    #   tailwind-preset.js (design tokens), tsconfig/{base,expo,node}.json
 │   ├── ui/                        # @platform/ui — react-native-reusables components (OWNED,
 │   │   ├── package.json           #   copied in via its CLI), consumed AS SOURCE, no build
-│   │   ├── .storybook/            # SHARED design-system workbench (web/react-native-web)
+│   │   ├── .storybook/            # SHARED workbench: main.ts (react-native-web-vite),
+│   │   │                          #   preview.tsx (global.css import + theme/brand decorators
+│   │   │                          #   + light|dark & brand toolbar globals)
 │   │   └── src/
 │   │       ├── index.ts
-│   │       ├── components/ui/     # button.tsx, text.tsx, ... + *.stories.tsx colocated
+│   │       ├── components/ui/     # button.tsx, text.tsx, ...
+│   │       │                      #   + *.stories.tsx + *.figma.tsx (Code Connect) colocated
 │   │       └── lib/{utils.ts,     # cn() helper
 │   │                theme.ts}     # default light/dark themes: CSS vars (web) + vars() (native)
 │   └── core/                      # @platform/core — plumbing ONLY (no screens)
@@ -266,6 +283,26 @@ needs hand-written glue). Output committed; CI drift check:
 `turbo run openapi build --filter=*api-client* && git diff --exit-code products/*/api-client products/*/api/openapi.json`.
 App sets client baseUrl from `EXPO_PUBLIC_API_URL` at startup.
 
+**Storybook (`packages/ui/.storybook`):** framework `@storybook/react-native-web-vite`;
+`main.ts` stories glob `../src/**/*.stories.tsx`; Vite config aliases `react-native` →
+`react-native-web` and runs the NativeWind/Tailwind step on `global.css`. `preview.tsx`
+imports `global.css`, wraps every story in the theme provider via a global decorator, and
+declares two toolbar `globalTypes` — `theme` (light|dark, toggles the `.dark` class) and
+`brand` (template|demo, swaps the active CSS-var block). Stories enumerate cva variants
+(argTypes can be derived from the cva config). VR: `storybook build` → `storybook-static/`;
+Playwright reads `storybook-static/index.json`, visits `iframe.html?id=<story>&globals=theme:dark`
+(and `:light`) per story, diffs committed baselines — runs in `e2e-nightly.yml`.
+
+**Figma bridge:** `scripts/figma-tokens.mjs` pulls Variables via the Figma REST API
+(`GET /v1/files/:key/variables/local`, needs `FIGMA_TOKEN`), resolves the `semantic`
+collection's modes through Style Dictionary, and writes each product's `theme.ts`/`global.css`
+CSS-var values — one-way + committed (drift is review-visible, optional CI re-run + `git diff
+--exit-code` guard like typegen). `figma.config.json` maps `{ fileKey, modes: { "template":
+<modeId>, "demo": <modeId> } }`. Code Connect: colocated `*.figma.tsx` map Figma component
+props → cva variants; published via the Code Connect CLI (`.figma/` config) so MCP
+`get_design_context` returns owned `@platform/ui` components. The generator adds the new
+product's brand mode to `figma.config.json` (placeholder modeId until the designer creates it).
+
 **Generator (`scripts/new-product.mjs`, plain Node):**
 1. Validate `/^[a-z][a-z0-9-]*$/`, refuse collisions; `portIndex` = max+1.
 2. Copy `_template` → `products/<name>` (skip node_modules/.venv/dist/.expo/release; keep uv.lock).
@@ -309,7 +346,7 @@ mock transport — integration tests hit the real DB, never mock the session.
 | # | Build | Verify |
 |---|---|---|
 | 1 | Root tooling: mise.toml, .npmrc, workspace+turbo+tsconfig, .gitignore, `packages/config`, lefthook.yml (hooks install via pnpm prepare) | `mise install && pnpm install && pnpm turbo run lint` (clean no-op); a commit triggers staged lint; a push triggers the affected gate |
-| 2 | `packages/ui`: adopt react-native-reusables (button/text/input/card) + theme infra (CSS vars, light/dark) + **Storybook workbench** with stories; `packages/core` (query+persist, env); `_template/app` shell: tabs, settings screen with working theme toggle; unit/component harness (Jest + RNTL) with a first Button test | dev server → themed components at `localhost:8081`, dark toggle works; `pnpm --filter @platform/ui storybook` renders the gallery; Expo Go on device; `turbo run export:web` + `npx serve dist`; `turbo run test` runs the RNTL test. **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55** |
+| 2 | `packages/ui`: adopt react-native-reusables (button/text/input/card) + theme infra (CSS vars, light/dark) + **Storybook workbench** (react-native-web-vite; `global.css` import + theme/brand toolbar decorators) with per-variant stories + colocated `*.figma.tsx` Code Connect maps; **Figma token pipeline** (`scripts/figma-tokens.mjs` + `figma.config.json`); `packages/core` (query+persist, env); `_template/app` shell: tabs, settings screen with working theme toggle; unit/component harness (Jest + RNTL) with a first Button test | dev server → themed components at `localhost:8081`, dark toggle works; `pnpm --filter @platform/ui storybook` renders the gallery, light/dark + brand toolbar switches re-theme live; `node scripts/figma-tokens.mjs` regenerates `theme.ts` from Figma Variables (or a committed fixture if no Figma file yet); `/add-component` produces a primitive with story + Code Connect + baseline; Expo Go on device; `turbo run export:web` + `npx serve dist`; `turbo run test` runs the RNTL test. **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55** |
 | 3 | `_template/api`: strict layered OOP — `models/`, `schemas/` (DTOs), `services/` (BaseService + ItemService/PushService, hold session), thin `routers/`; UUIDv7 base, problem+json, cursor pagination, security.py (CORS/headers/slowapi), middleware, /healthz + /v1/hello + /v1/items CRUD, auth.py, db.py, initial Alembic migration (RLS deny-all), seed.py, polyfactory factories, pyright-strict config, Dockerfile, fly tomls, pytest (real Postgres) | `turbo run dev --filter=*template-api` + `curl /healthz`; items CRUD + paging; problem+json errors; 429 on rate limit; CORS preflight from web origin passes; DTOs returned (no ORM leakage); `pyright` clean in strict mode; `seed.py` populates DB; `turbo run test lint` (pg service); `docker build` |
 | 4 | Typegen: export_openapi.py, `api-client/` (hey-api), turbo wiring; `features/home` list screen renders the cursor-paginated /v1/items via generated `useInfiniteQuery` hook (cache-persisted) | `turbo run build --filter=*template-app` shows openapi→client→app order; model change regenerates types; web renders paginated API data; reload shows cached data instantly |
 | 5 | Desktop: main/preload, `app://` protocol, electron-builder.yml, updater (no-op w/o repo) | `turbo run build` + start → same screen in window; navigation works; API down → shell still launches; `electron-builder --dir` packs |
