@@ -46,15 +46,19 @@ confirm:
      },
    };
    ```
-   ⚠️ OPEN / TO CONFIRM: PLAN.md says `app.config.ts` sets `web.output "single"` but does not
-   pin whether the web bundler is `metro` or `webpack`; SDK 56 default is `metro`. Confirm in
-   the app config from Phase 2.
+   **Bundler is `metro` (confirmed).** In modern Expo SDKs (incl. SDK 56) **webpack is NOT an
+   option** for web — it was removed; Metro is the default and only supported web bundler. So
+   `web: { output: "single", bundler: "metro" }` is the correct and only config, and it produces
+   the single `index.html` SPA the `app://` handler depends on. No further confirmation needed.
 3. **Turbo graph wiring is understood:** `desktop#build` `dependsOn: ["^export:web"]` and the
    desktop→app dependency edge comes from a real `devDependency` on `@platform/template-app`
    (see turbo notes in PLAN.md "Config essentials"). This guide creates that edge.
-4. **Electron version target:** ⚠️ OPEN / TO CONFIRM — PLAN.md does not pin an exact Electron
-   major. Use the current stable Electron at build time and pin it **exact** (consistent with
-   the repo's pre-1.0 / tooling-pinning stance). Skeletons below use a placeholder version.
+4. **Electron version target (resolved):** pin **Electron `42.4.0`** exact (stable since
+   2026-05-07; Chromium 148, **Node 24.15.0**). Supported majors under the "latest 3 stable"
+   policy are **42 / 41 / 40** — 42.4.0 has the longest support runway; do NOT use 43 (alpha/beta).
+   Companion pins: **electron-builder `26.15.3`** (NOT v27 — alpha, and removes implicit
+   publishing), **electron-updater `6.8.9`**, `@types/node` on the **Node 24** line. All pins
+   are filled into step 1's `package.json`.
 
 ---
 
@@ -114,13 +118,13 @@ confirm:
   },
   "devDependencies": {
     "@platform/template-app": "workspace:*",
-    "electron": "PLACEHOLDER-pin-exact",
-    "electron-builder": "PLACEHOLDER-pin-exact",
-    "typescript": "PLACEHOLDER-pin-exact",
-    "@types/node": "PLACEHOLDER-pin-exact"
+    "electron": "42.4.0",
+    "electron-builder": "26.15.3",
+    "typescript": "5.9.3",
+    "@types/node": "^24.3.0"
   },
   "dependencies": {
-    "electron-updater": "PLACEHOLDER-pin-exact"
+    "electron-updater": "6.8.9"
   }
 }
 ```
@@ -149,8 +153,16 @@ pnpm install
 - `pack` = `electron-builder --dir` (the Phase 5 verify gate — unpacked, no signing, no
   publish). `dist` = full installers. `release` = `--publish always` (used by
   `electron-release.yml`, gated on a real repo).
-- Pin every tool **exact** — consistent with the repo-wide pre-1.0 pinning stance. The
-  `PLACEHOLDER-pin-exact` markers must be replaced with concrete versions on first install.
+- Pin every tool **exact** — consistent with the repo-wide pinning stance. Verified pins
+  (June 2026): **Electron `42.4.0`** (stable since 2026-05-07; Chromium 148, **Node 24.15.0**;
+  supported majors under the "latest 3 stable" policy are **42 / 41 / 40** — do NOT jump to 43,
+  still alpha/beta), **electron-builder `26.15.3`** (do NOT adopt v27 — `27.0.0-alpha.2` is still
+  alpha **and removes implicit publishing**, see step 7 + Open questions), **electron-updater
+  `6.8.9`**. `@types/node` is pinned on the **Node 24 line** (`^24.3.0`, matching step 1's
+  `package.json`) so the main-process types match the runtime Electron 42 bundles
+  (Node 24.15.0); `typescript` is current 5.x stable.
+  ⚠️ REVIEW: confirm the exact `typescript` patch (`5.9.3` shown) matches the version the rest
+  of the repo pins.
 
 ### 2. TypeScript config for the main/preload process
 
@@ -191,8 +203,13 @@ pnpm --filter @platform/template-desktop run typecheck
   (strict, `moduleResolution: bundler`, `noEmit`) is wrong for emitting runnable Electron
   code, so this config stands alone and emits CJS to `build/`.
 - `module: CommonJS` + `"main": "build/main.js"` — Electron's default main entry is CJS.
-  (⚠️ OPEN / TO CONFIRM: newer Electron supports ESM main; if you opt into `"type":"module"`
-  + `.mjs`, switch `module`/`moduleResolution` accordingly. CJS is the lowest-risk default.)
+  **Decision: keep the main process CJS.** ESM main *is* available on Electron 42 (supported
+  since Electron 28 via Node's ESM loader, `.mjs`/`"type":"module"`), but CJS is the deliberate
+  choice here: it is the lowest-risk default, integrates cleanly with `protocol.handle` /
+  `net.fetch`, and — critically — avoids ESM's async-import caveat where only entry-point import
+  side effects are guaranteed to run before `ready`. That matters because
+  `registerSchemesAsPrivileged` MUST run **before** `app.whenReady()` (see step 3 / gotcha #2);
+  CJS makes that top-level call unambiguous. Revisit only if the whole repo standardizes on ESM.
 - `strict: true` mirrors the repo-wide strictness invariant.
 - `skipLibCheck` keeps Electron's large `.d.ts` from slowing typecheck without weakening our
   own strictness.
@@ -262,8 +279,10 @@ function registerAppProtocol(): void {
     if (relPath === "") relPath = "index.html";
 
     // Resolve and guard against path traversal escaping renderer/.
+    // Compare against RENDERER_DIR + path.sep (NOT a bare startsWith on RENDERER_DIR) so a
+    // sibling dir sharing the prefix (e.g. renderer-evil/) cannot satisfy the check.
     const resolved = path.normalize(path.join(RENDERER_DIR, relPath));
-    if (!resolved.startsWith(RENDERER_DIR)) {
+    if (resolved !== RENDERER_DIR && !resolved.startsWith(RENDERER_DIR + path.sep)) {
       return new Response("Forbidden", { status: 403 });
     }
 
@@ -366,9 +385,12 @@ pnpm --filter @platform/template-desktop run start   # electron .
   Chromium freezes scheme registration once the app is ready; registering late silently
   fails and the SPA loses secure-context / fetch behaviour (PLAN.md "Electron main.ts
   essentials" + Gotchas below).
-- **`protocol.handle("app", …)`** is the modern (Electron ≥25) replacement for the
-  deprecated `registerFileProtocol`/`registerBufferProtocol`. It maps the request URL to a
-  file under `renderer/`.
+- **`protocol.handle("app", …)`** is the modern (Electron ≥25) API and the documented
+  replacement for the deprecated `registerFileProtocol` / `registerBufferProtocol` /
+  `registerStringProtocol` (all explicitly marked deprecated in the official `protocol` docs).
+  It runs **after** `app.whenReady()` (all `protocol` methods bar `registerSchemesAsPrivileged`
+  are post-ready), receives a request, and returns `Response | Promise<Response>` — exactly as
+  the handler does. It maps the request URL to a file under `renderer/`.
 - **SPA fallback to `index.html` with `text/html`** is the heart of Key ruling #2: Expo
   Router has no hash mode and breaks under `file://`. Any route with no on-disk file
   (`app://-/settings`, `app://-/(tabs)/index`) returns `index.html` so the client router
@@ -377,8 +399,11 @@ pnpm --filter @platform/template-desktop run start   # electron .
   extension-less / unknown paths fall through to the SPA index. Serving `index.html` for a
   missing `.js` would hand the bundle HTML and white-screen the app — hence the extension
   check.
-- **Path-traversal guard** (`resolved.startsWith(RENDERER_DIR)`) prevents `app://-/../../`
-  from escaping the renderer dir.
+- **Path-traversal guard** prevents `app://-/../../` from escaping the renderer dir. It
+  compares against **`RENDERER_DIR + path.sep`** (plus an exact-equality allowance for the dir
+  itself) rather than a bare `startsWith(RENDERER_DIR)` — a bare prefix check can be fooled by a
+  sibling directory sharing the prefix (e.g. `renderer-evil/`), so the separator-anchored
+  comparison is the correct hardening.
 - **`win.loadURL("app://-/")`** — load the SPA via the custom origin, not `file://`.
 - **`contextIsolation:true` + `nodeIntegration:false` + `sandbox:true`** — the SPA is
   untrusted UI; it gets Node access only through the explicit preload bridge.
@@ -421,8 +446,14 @@ contextBridge.exposeInMainWorld("desktop", api);
   lets `@platform/core`/UI feature-detect desktop without a hard dependency.
 - `getVersion` shown as a representative `invoke` pattern; back it with an
   `ipcMain.handle("app:get-version", () => app.getVersion())` in `main.ts` only if/when a UI
-  surface consumes it. ⚠️ OPEN / TO CONFIRM — PLAN.md does not specify any concrete desktop
-  bridge API; this is a safe placeholder.
+  surface consumes it. This whole `{ platform, getVersion }` surface is fully compatible with
+  `sandbox: true` (a sandboxed preload still gets the polyfilled `contextBridge` + `ipcRenderer`
+  subset).
+- **Bridge API surface — resolved as a design choice.** PLAN.md specifies no concrete desktop
+  bridge API, and no Electron doc dictates one, so this is config, not a doc-fact: the minimal
+  `{ platform, getVersion }` is correct and security-compliant. Keep it deliberately tiny and
+  **grow one method at a time on real need** — only adding the matching `ipcMain.handle` when UI
+  actually consumes it.
 
 ### 5. Renderer copy step — `scripts/copy-renderer.mjs`
 
@@ -584,6 +615,11 @@ publish:
   repo: template-desktop-releases      # <org>/template-desktop-releases (per-product)
   # `releaseType` left default; electron-release.yml runs `--publish always` only
   # on a real tag, and only win/linux are published until mac is signed.
+  # FORWARD-LOOKING (electron-builder v27): implicit publishing (auto-publish on CI/tag
+  # detection) is deprecated and will be REMOVED in v27 — publish intent must be explicit
+  # (`--publish always`/`onTag`). The guide already uses explicit `--publish always` in
+  # `electron-release.yml`, so it is ALREADY compliant; this is only a note for a future
+  # bump off the pinned 26.15.3. (v27 is still `27.0.0-alpha.2` — do not adopt yet.)
 ```
 
 **Commands:**
@@ -608,9 +644,17 @@ cd products/_template/desktop && pnpm exec electron-builder --dir
   auto-update needs signing/notarization → gate publish to win/linux until certs"). The
   publish gate lives in `electron-release.yml` (publish win/linux only for now).
 - **`publish` block is the per-product repo** (`<org>/template-desktop-releases`) — Key
-  ruling #3's fix for the multi-product GitHub-provider collision. Marked PLACEHOLDER; with
-  the placeholder owner/repo `electron-updater` would 404, which is exactly why `main.ts`
-  gates the check on `DESKTOP_RELEASES_CONFIGURED`.
+  ruling #3's fix for the multi-product GitHub-provider collision. The GitHub provider fetches
+  `latest.yml` / `latest-mac.yml` / `latest-linux.yml` from a repo's releases; those filenames
+  are **per-repo, not per-app**, so two products publishing to one repo would overwrite each
+  other's `latest*.yml` and each updater would pick up the wrong product's release. A separate
+  `<org>/<product>-desktop-releases` repo per product is the cleanest fix (per-product `channel`
+  names on a shared repo is a viable alternative but pollutes the release list — keep separate
+  repos). Marked PLACEHOLDER; with the placeholder owner/repo `electron-updater` would 404, which
+  is exactly why `main.ts` gates the check on `DESKTOP_RELEASES_CONFIGURED`.
+- **electron-builder v27 forward note:** implicit publishing is removed in v27; the explicit
+  `--publish always` in `electron-release.yml` already complies. Stay on the pinned `26.15.3`
+  (v27 is alpha) and revisit only on a deliberate bump.
 
 ---
 
@@ -669,10 +713,15 @@ cd products/_template/desktop && pnpm exec electron-builder --dir
    version of the UI, you skipped `build` (or ran `electron .` against a stale copy) — always
    `turbo run build` (which runs `^export:web` → copy) before `start`.
 
-9. **CORS allowlist must include `app://`.** PLAN.md "API hardening" already lists the desktop
-   `app://` origin in the FastAPI CORS allowlist. If desktop data fetches 403 while web works,
-   confirm `app://` (or the `app://-` origin) is in the API's env-driven allowlist (owned by
-   Phase 3, noted here for cross-reference).
+9. **CORS allowlist must include the exact origin `app://-`.** A custom *standard* scheme
+   produces a real `Origin` header, and a cross-origin `fetch` from the renderer to the API is
+   CORS-checked. A request from `app://-/` sends the literal Origin **`app://-`** (scheme +
+   host, **no trailing slash**) — so that exact string is what the FastAPI env-driven allowlist
+   must contain (not `app://`, and not `app://-/`). PLAN.md "API hardening" lists the desktop
+   `app://` origin; pin it precisely as `app://-` (the host `-` chosen in `win.loadURL("app://-/")`
+   is what determines the origin string — if the host ever changes, the allowlist entry must
+   change with it). Owned by Phase 3; verify empirically once the shell runs (a mismatch is a
+   silent 403 on desktop while web works).
 
 10. **Don't extend `tsconfig.base.json` for the main process.** The base config is `noEmit` +
     bundler resolution for RN/web; the Electron main is a Node CJS emit target. Mixing them
@@ -748,8 +797,9 @@ Phase 5 is one feature branch, logically:
    `protocol.handle`, SPA fallback, BrowserWindow, gated updater), `src/preload.ts`.
 3. **`feat(desktop): electron-builder config (publish placeholder, mac signing gated)`** —
    `electron-builder.yml`.
-4. _(optional)_ **`chore(desktop): pin electron toolchain exact`** — replace the
-   `PLACEHOLDER-pin-exact` versions once installed and verified.
+4. _(optional)_ **`chore(desktop): verify pinned electron toolchain`** — the pins
+   (Electron `42.4.0`, electron-builder `26.15.3`, electron-updater `6.8.9`, `@types/node@^24`)
+   are filled in step 1; this commit covers any patch-bump after `pnpm install` + verify.
 
 Each commit should leave the repo green for `turbo run typecheck --filter=@platform/template-desktop`.
 Do **not** add `electron-release.yml` here — that workflow is Phase 8 (CI/CD); Phase 5 only
@@ -759,21 +809,28 @@ proves `--dir` packs locally.
 
 ## Open questions / deferred
 
-- ⚠️ OPEN / TO CONFIRM — **exact Electron / electron-builder / electron-updater versions.**
-  PLAN.md pins no majors; pick current stable and pin exact (`PLACEHOLDER-pin-exact` markers).
-- ⚠️ OPEN / TO CONFIRM — **CJS vs ESM main process.** Skeleton uses CJS (lowest risk). ESM
-  main is supported on recent Electron; revisit if the repo standardizes on ESM.
-- ⚠️ OPEN / TO CONFIRM — **desktop bridge API surface.** PLAN.md specifies no concrete
-  `preload` methods; `platform`/`getVersion` are placeholders. Grow deliberately on real need.
-- ⚠️ OPEN / TO CONFIRM — **build-resources / icons.** `electron-builder.yml` references
-  `build-resources/`; desktop app icons (per-OS `.ico`/`.icns`/`.png`) are not specified by
-  PLAN.md. PLAN.md's brand assets live in `app/assets/brand/` (web favicon/icon) — wiring a
-  regen step to also emit desktop icon formats is unspecified. Reuse the brand source when the
-  asset pipeline (Phase 7 regen script) is in place.
-- ⚠️ OPEN / TO CONFIRM — **`DESKTOP_RELEASES_CONFIGURED` env flag** is this guide's mechanism
-  for the updater no-op gate; PLAN.md only says "no-op w/o repo". Confirm the flag name /
-  how `electron-release.yml` sets it once a real repo exists (alternatively gate on detecting
-  a non-placeholder `publish.owner` baked into the build).
+- ✅ RESOLVED — **exact Electron / electron-builder / electron-updater versions.** Pinned
+  **Electron `42.4.0`** (stable 2026-05-07; Chromium 148, Node 24.15.0; supported majors 42/41/40
+  — not 43), **electron-builder `26.15.3`** (NOT v27 — alpha + removes implicit publishing),
+  **electron-updater `6.8.9`**, `@types/node` on the Node 24 line. Filled into step 1.
+- ✅ RESOLVED — **CJS vs ESM main process.** Keep **CJS** (step 2). ESM main is available on
+  Electron 42 but CJS is the deliberate lowest-risk choice — it makes the **before-`ready`**
+  `registerSchemesAsPrivileged` call unambiguous (ESM's async-import timing is the risk).
+  Revisit only if the whole repo standardizes on ESM.
+- ✅ RESOLVED — **desktop bridge API surface.** No PLAN.md/Electron doc dictates one, so this is
+  a design choice: the minimal `{ platform, getVersion }` over `contextBridge` is correct and
+  sandbox-safe. Keep it tiny; grow one method at a time on real need.
+- ✅ RESOLVED (mechanism) — **`DESKTOP_RELEASES_CONFIGURED` env flag.** This env-var name is this
+  guide's own invention (not an Electron/electron-updater concept) and is a reasonable mechanism;
+  keep it. `electron-release.yml` sets `DESKTOP_RELEASES_CONFIGURED=1` only on a real tagged
+  release once the per-product repo exists. A self-contained alternative needing no CI plumbing
+  is to gate on detecting a **non-placeholder `publish.owner`** (owner !== `example`) baked into
+  the build — either works; the env flag is simplest.
+- ⚠️ REVIEW — **build-resources / icons.** `electron-builder.yml` references `build-resources/`;
+  desktop app icons (per-OS `.ico`/`.icns`/`.png`) are not specified by PLAN.md. PLAN.md's brand
+  assets live in `app/assets/brand/` (web favicon/icon) — wiring a regen step to also emit
+  desktop icon formats is unspecified. Reuse the brand source when the asset pipeline (Phase 7
+  regen script) is in place.
 - **Deferred (per PLAN.md testing row):** Playwright `_electron` desktop E2E — only if shell
   logic grows beyond a thin wrapper. Phase 5 ships the launch smoke only.
 - **Deferred to Phase 8:** `electron-release.yml` (3-OS matrix, `--publish always`, tag
