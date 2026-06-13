@@ -6,7 +6,8 @@ to `@platform/core` (a Supabase client factory, a Zustand **session store** wire
 `onAuthStateChange`, and Expo Router **route guards**), build the **product-local** auth
 screens (`app/features/auth/` login + signup, with thin `(auth)/` route files) per Key ruling
 #9, protect the FastAPI **`/v1/me`** endpoint with the `CurrentUser` dependency from Phase 3
-(JWKS + HS256 local fallback, Key ruling #5), and add `core/storage.ts` + an **avatar upload
+(JWKS as the **primary** verification path on **all** environments including local, with HS256
+as a genuine fallback only, Key ruling #5), and add `core/storage.ts` + an **avatar upload
 demo** on the settings screen (direct-to-Storage upload via `supabase-js`).
 
 This is the first phase where the frontend talks to Supabase directly. Per the locked
@@ -43,8 +44,10 @@ confirm:
    wraps the tree in the theme + query providers. This phase **extends** that `_layout.tsx`
    with the auth provider + error boundary, and adds the avatar block to the settings screen.
 2. **Phase 3 done** — `_template/api` runs with `auth.py` scaffolded: the `CurrentUser`
-   dependency, JWKS verification via `PyJWKClient` (ES256/RS256, cached) and an **HS256 +
-   `SUPABASE_JWT_SECRET` fallback** (Key ruling #5), `settings.py` (pydantic-settings),
+   dependency, JWKS verification via `PyJWKClient` (ES256/RS256, cached) as the **primary path
+   on all environments (including local)**, plus an **HS256 + `SUPABASE_JWT_SECRET` fallback**
+   for older CLI / self-hosted symmetric secrets / manually-minted test tokens (Key ruling #5),
+   `settings.py` (pydantic-settings),
    problem+json error handlers, and a thin `routers/` pattern. Phase 6 **finalizes** the
    protected `routers/me.py` and confirms the `auth.py` wiring against a real local token.
    ⚠️ OPEN / TO CONFIRM — exactly how complete `auth.py`/`me.py` were left at the end of
@@ -91,8 +94,10 @@ confirm:
       render returned URL).
 - [ ] `app/.env.development` is **committed** with `EXPO_PUBLIC_SUPABASE_URL`,
       `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_API_URL` (local values, publishable only).
-- [ ] API: `routers/me.py` is protected by `CurrentUser`; `auth.py` verifies JWKS **and** the
-      HS256 local token; `settings.py` carries `SUPABASE_JWT_SECRET` + the JWKS URL.
+- [ ] API: `routers/me.py` is protected by `CurrentUser`; `auth.py` verifies JWKS as the
+      **primary** path (ES256/RS256, including against the local stack) with HS256 as a
+      fallback; `settings.py` carries the JWKS URL (derived from `supabase_url`) plus the
+      optional `SUPABASE_JWT_SECRET` fallback.
 - [ ] All **Verify** commands pass (see Verification).
 - [ ] `turbo run typecheck test lint --affected` is green for `@platform/core`,
       `@platform/template-app`, and `@platform/template-api`.
@@ -153,6 +158,15 @@ additional_redirect_urls = ["http://localhost:8081", "exp://localhost:8081", "ap
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
+# JWT signing: the current CLI (≥ v2.71.1) defaults the LOCAL stack to asymmetric ES256,
+# matching new hosted projects — so the JWKS path is the primary verifier locally too
+# (point the API's SUPABASE_URL at http://localhost:54321). Do NOT assume HS256 locally.
+# If you deliberately want HS256 locally (e.g. simpler tests, no JWKS round-trip), pin it
+# explicitly via the signing-keys mechanism and document the CLI-version dependency:
+#   supabase gen signing-key --algorithm HS256   # (or ES256 to stay on the default)
+#   signing_keys_path = "./supabase/signing_key.json"
+# A dedicated `jwt_algorithm` toggle was still only a feature request as of Jan 2026
+# (supabase/cli#4726), so signing-keys is the supported way to force the local algorithm.
 
 [auth.email]
 enable_signup = true
@@ -177,14 +191,21 @@ supabase status --workdir products/_template         # prints API URL, anon key,
 multiple products' stacks coexist (`pnpm bootstrap` runs them together — Phase 7). `project_id`
 is keyed to the **product** (`example-template`), never the monorepo name, keeping the scaffold
 portable. `enable_confirmations = false` is a **local-only** convenience so signup → login is
-testable without the Inbucket email step; the hosted projects enforce confirmation. The JWT
-secret printed by `supabase status` is what the API's **HS256 fallback** consumes (Key ruling
-#5 — the local CLI still issues **HS256** tokens).
+testable without the Inbucket email step; the hosted projects enforce confirmation. The
+current CLI (≥ v2.71.1) signs **local** tokens with **asymmetric ES256** by default — the same
+as new hosted projects — so the API verifies them through **JWKS** locally too (point
+`SUPABASE_URL` at `http://localhost:54321`; Key ruling #5). The JWT secret printed by
+`supabase status` is only consumed if you fall back to the HS256 path (older CLI / self-hosted
+symmetric secret / manually-minted test tokens), which is **not** the local happy path on a
+current CLI.
 
-> ⚠️ OPEN / TO CONFIRM — exact `config.toml` key set for the pinned CLI version. The CLI's
-> generated default `config.toml` is authoritative for the installed version; the block above
-> shows the **required intent** (auth on, storage on, ports offset). Run `supabase init` once
-> to materialize the canonical default, then apply the offsets + `project_id`.
+> **Resolved (was OPEN — `config.toml` key set + local JWT algorithm).** The table structure
+> above matches the current CLI config reference; the canonical procedure is to run
+> `supabase init` once to materialize the installed version's default `config.toml`, then apply
+> the offsets + `project_id`. Because the current CLI defaults the local stack to **ES256**, do
+> **not** assume HS256: either accept ES256 and let the JWKS branch verify locally (the default
+> here), or pin HS256 deliberately via the signing-keys mechanism shown in the `[auth]` block
+> above. Confirm `major_version = 17` matches the Postgres bundled with the pinned CLI version.
 
 ---
 
@@ -474,6 +495,15 @@ export async function signedAvatarUrl(path: string, expiresInSec = 3600): Promis
 **Why:** Storage uploads are an **explicitly allowed** frontend-direct path (Topology +
 Cross-cutting Storage/CDN). Uploading to `<userId>/...` is what lets the RLS policy scope writes
 per user (step 9). `upsert: true` + cache-busting query gives a clean "replace my avatar" UX.
+The method names + return shapes (`.upload(path, body, {contentType, upsert})`,
+`getPublicUrl(path) → {data:{publicUrl}}`, `createSignedUrl(path, secs) → {data:{signedUrl}}`)
+match supabase-js v2 current.
+
+> ⚠️ REVIEW: on **React Native**, fetching a `file://` URI to a `Blob` has historically been
+> flaky; the more robust RN path is an `ArrayBuffer` (e.g. `expo-file-system` read or
+> `fetch(...).then(r => r.arrayBuffer())`) passed to `.upload(...)`. The `fetch → blob` form
+> above is fine on web and recent RN, but switch to `ArrayBuffer` if uploads misbehave on a
+> device.
 
 ---
 
@@ -691,9 +721,12 @@ avatar, while keeping reads public so any client can render it. Schema/storage c
 Supabase **migrations** dir (the storage schema is Supabase-managed, not the app's SQLModel
 tables).
 
-> ⚠️ OPEN / TO CONFIRM — whether avatars should be **public** (simpler demo, `getPublicUrl`)
-> or **private** (`createSignedUrl`). This guide ships **public** for the demo and includes
-> `signedAvatarUrl` for the private variant. Confirm the product default.
+> **Resolved (was OPEN — public vs private avatars bucket) → public** for the template demo.
+> A public bucket with `getPublicUrl` (synchronous, no network round-trip) is the simplest
+> correct choice and the common Supabase avatar pattern; per-user write safety comes from the
+> `(<uid>/...)` prefix policy on `storage.objects`, **not** from bucket privacy. The
+> `signedAvatarUrl` helper (step 6) is retained for products that flip the bucket to private —
+> they switch the render path to `createSignedUrl` (async, expiring).
 
 ---
 
@@ -801,12 +834,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Base of the Supabase project (hosted per-env; local = http://localhost:54321).
+    # Base of the Supabase project. Hosted per-env; local = http://localhost:54321.
+    # Point this at the LOCAL stack in dev so PyJWKClient resolves the local JWKS — the
+    # current CLI issues ES256 locally, so JWKS is the primary verifier on every env.
     supabase_url: str
-    # JWKS endpoint for asymmetric (ES256/RS256) verification on hosted projects.
-    # Derived from supabase_url; kept explicit so it can be overridden per env.
+    # JWKS endpoint for asymmetric (ES256/RS256) verification — the PRIMARY path on ALL
+    # environments (hosted and current-CLI-local). Derived from supabase_url; kept explicit
+    # so it can be overridden per env.
     supabase_jwks_url: str | None = None
-    # HS256 fallback secret — REQUIRED locally because the Supabase CLI still issues HS256.
+    # HS256 FALLBACK secret only — used for older CLI versions, self-hosted symmetric
+    # secrets, or manually-minted test tokens. NOT required on a current CLI (which signs
+    # local tokens with ES256, verified via JWKS above).
     supabase_jwt_secret: str | None = None
     supabase_jwt_aud: str = "authenticated"
 
@@ -836,6 +874,9 @@ _bearer = HTTPBearer(auto_error=False)
 # PyJWKClient caches signing keys internally (lifecycle = process); ES256/RS256 path.
 _jwks_client = PyJWKClient(settings.jwks_url)
 
+# ES256 (P-256) is the new-project AND current-CLI-local default; RS256 is the other
+# common asymmetric option, so accept both. (EdDSA/Ed25519 is also selectable — add
+# "EdDSA" here only if a product opts into Ed25519 signing keys.)
 _ASYM_ALGS = ["ES256", "RS256"]
 
 
@@ -847,7 +888,10 @@ class AuthUser:
 
 
 def _decode(token: str) -> dict[str, Any]:
-    # 1) Try asymmetric verification via JWKS (hosted/new Supabase projects).
+    # 1) PRIMARY: asymmetric verification via JWKS. This is the happy path on ALL
+    #    environments — new hosted projects AND the current local CLI (>= v2.71.1) both
+    #    default to ES256, so point settings.supabase_url at http://localhost:54321 locally
+    #    and PyJWKClient hits the local /auth/v1/.well-known/jwks.json.
     try:
         signing_key = _jwks_client.get_signing_key_from_jwt(token).key
         return jwt.decode(
@@ -859,7 +903,12 @@ def _decode(token: str) -> dict[str, Any]:
     except (jwt.PyJWKClientError, jwt.InvalidAlgorithmError, jwt.DecodeError):
         pass  # fall through to HS256
 
-    # 2) HS256 fallback — the LOCAL Supabase CLI still issues HS256 (Key ruling #5).
+    # 2) FALLBACK: HS256 symmetric verification — only for older CLI versions, self-hosted
+    #    symmetric secrets, or manually-minted test tokens (Key ruling #5). NOT reached on a
+    #    current CLI, whose local tokens are ES256 and verify via the JWKS branch above.
+    #    (Operationally this branch is reachable only when the JWKS endpoint yields no usable
+    #    key for the token — e.g. a project still on legacy HS256 symmetric signing returns no
+    #    asymmetric keys — so the asym attempt above raises and we fall through here.)
     if not settings.supabase_jwt_secret:
         raise _unauthorized("token verification unavailable")
     try:
@@ -921,15 +970,25 @@ class MeOut(BaseModel):
 **Commands** (api `.env` — server-side, NOT committed; templated by `.env.example`):
 ```bash
 # products/_template/api/.env  (local; from `supabase status`)
+# SUPABASE_URL points at the LOCAL stack so PyJWKClient verifies the CLI's ES256 tokens
+# via the local JWKS — this is the local happy path on a current CLI.
 SUPABASE_URL=http://localhost:54321
-SUPABASE_JWT_SECRET=<JWT secret from `supabase status`>
+# SUPABASE_JWT_SECRET is the OPTIONAL HS256 fallback only — leave unset on a current CLI
+# (local tokens are ES256). Set it only when targeting an older CLI / self-hosted symmetric
+# secret / minted HS256 test tokens.
+# SUPABASE_JWT_SECRET=<JWT secret from `supabase status`>
 ```
 
-**Why:** Implements **Key ruling #5** verbatim: try **JWKS (ES256/RS256, cached)** first for
-hosted projects, fall back to **HS256 + `SUPABASE_JWT_SECRET`** because the **local CLI issues
-HS256**. `audience="authenticated"` is enforced (Gotchas). `CurrentUser` is the thin
-dependency Phase 3 promised; `routers/me.py` stays a one-liner reading verified claims — no DB
-round-trip, no ORM leakage (DTO `MeOut` only). Mount the router in `main.py` if Phase 3 didn't.
+**Why:** Implements **Key ruling #5** verbatim: **JWKS (ES256/RS256, cached) is the primary
+verifier on every environment** — new hosted projects AND the current local CLI (≥ v2.71.1)
+both default to ES256, so pointing `supabase_url` at `http://localhost:54321` lets
+`PyJWKClient` verify local tokens through the local JWKS. HS256 + `SUPABASE_JWT_SECRET` is a
+genuine **fallback only** (older CLI, self-hosted symmetric secret, manually-minted test
+tokens) — a backend that trusts only HS256 locally will **401 every request** on a current CLI
+(supabase/cli#4726). `audience="authenticated"` is enforced (Gotchas). `CurrentUser` is the
+thin dependency Phase 3 promised; `routers/me.py` stays a one-liner reading verified claims —
+no DB round-trip, no ORM leakage (DTO `MeOut` only). Mount the router in `main.py` if Phase 3
+didn't.
 
 > ⚠️ OPEN / TO CONFIRM — Phase 3's exact `problem()` signature/`errors.py` API and whether the
 > `me` router was already mounted. The above assumes the Phase 3 problem+json helper; reconcile.
@@ -938,11 +997,16 @@ round-trip, no ORM leakage (DTO `MeOut` only). Mount the router in `main.py` if 
 
 ## Gotchas & pitfalls
 
-- **Local CLI issues HS256 → the fallback is mandatory.** New hosted Supabase projects use
-  asymmetric keys (verify via JWKS), but the **local** CLI stack signs tokens with **HS256**
-  using the secret from `supabase status`. Without the HS256 + `SUPABASE_JWT_SECRET` fallback
-  (Key ruling #5), **every local `/v1/me` call 401s** even with a valid session. Set
-  `SUPABASE_JWT_SECRET` in the api `.env` from `supabase status`.
+- **JWKS is the primary path locally too — a HS256-only backend 401s every local request.**
+  The current Supabase CLI (≥ v2.71.1) signs **local** tokens with **asymmetric ES256** by
+  default, the same as new hosted projects — the old "local CLI issues HS256" premise is
+  **false** on a current CLI (supabase/cli#4726). So point the api's `SUPABASE_URL` at
+  `http://localhost:54321` and let `PyJWKClient` verify local tokens through the local
+  `/auth/v1/.well-known/jwks.json`. A backend configured to trust **only** HS256 locally will
+  **401 every authenticated `/v1/me` call** even with a valid session. HS256 +
+  `SUPABASE_JWT_SECRET` is a **fallback only** (older CLI, self-hosted symmetric secret,
+  manually-minted test tokens); if you genuinely want HS256 locally, pin it explicitly in
+  `config.toml` via the signing-keys mechanism (§1) and document the CLI-version dependency.
 - **`audience="authenticated"` is required.** Supabase access tokens carry `aud:
   "authenticated"`. If `jwt.decode` omits `audience`, PyJWT raises `InvalidAudienceError` →
   401. Set `supabase_jwt_aud = "authenticated"` (default above).
@@ -1039,8 +1103,12 @@ in place and the new image shows (cache-bust working). A signed-out attempt is i
 turbo run typecheck test lint --affected
 ```
 **Expected:** Green for `@platform/core`, `@platform/template-app`, `@platform/template-api`.
-API tests include `test_auth.py` (JWT paths: valid HS256, bad token → 401, missing aud) and a
-`/v1/me` router round-trip over the real local Postgres (per the testing strategy).
+API tests include `test_auth.py` (JWT paths: a minted HS256 token exercising the fallback
+branch, bad token → 401, missing aud → 401) and a `/v1/me` router round-trip over the real
+local Postgres (per the testing strategy). Note: the HS256 tests mint tokens directly so they
+pass on their own merits, but they **no longer represent what the live local stack emits** —
+the running CLI issues ES256, verified via the JWKS branch. Add an ES256/JWKS-path test if you
+want coverage matching the live local token (e.g. against the local JWKS or a mocked JWK set).
 
 ---
 
@@ -1076,22 +1144,27 @@ broadcast pattern, push loop, or CI workflows here — those are Phase 8.
 - ⚠️ OPEN / TO CONFIRM — **exact pinned versions** of `@supabase/supabase-js`,
   `@react-native-async-storage/async-storage`, `zustand`, `expo-image-picker`, `pyjwt[crypto]`.
   PLAN.md pins no majors; pick current stable, pin exact (`PLACEHOLDER-pin-exact` markers).
-- ⚠️ OPEN / TO CONFIRM — **avatars bucket public vs private.** Guide ships **public**
-  (`getPublicUrl`) for the demo + includes `signedAvatarUrl` for the private path. Confirm the
-  product default; private buckets need the signed-URL render path on settings.
+- **Resolved — avatars bucket public vs private → public** for the template demo
+  (`getPublicUrl`, synchronous, common avatar pattern; per-user write safety from the `<uid>/`
+  prefix policy, not bucket privacy). `signedAvatarUrl` is retained for products that flip to a
+  private bucket (they switch the settings render path to `createSignedUrl`).
 - ⚠️ OPEN / TO CONFIRM — **Phase 3 reconciliation.** The Phase 3 guide (`docs/phase-3-api.md`)
   does not yet exist; this guide writes the authoritative `auth.py` / `settings.py` /
   `routers/me.py`. If Phase 3 already shipped any of these (e.g. `problem()` signature, whether
   `me` is mounted), reconcile rather than duplicate.
 - ⚠️ OPEN / TO CONFIRM — **Phase 2 export names** for `ThemeProvider` / `QueryProvider` and the
   product-local `features/_shared/error-boundary` location used by `app/_layout.tsx`.
-- ⚠️ OPEN / TO CONFIRM — **canonical `config.toml` key set** for the pinned Supabase CLI
-  version. Run `supabase init` to materialize the version's default, then apply offsets +
-  `project_id` (the block here shows required intent).
-- ⚠️ OPEN / TO CONFIRM — **email confirmation in local DX.** Guide sets
-  `enable_confirmations = false` locally so signup→login is one step; if a product wants to
+- **Resolved — canonical `config.toml` key set** (see §1). The table structure shown matches
+  the current CLI config reference; the procedure is to run `supabase init` once to materialize
+  the pinned version's default `config.toml`, then apply the offsets + `project_id`. Because the
+  current CLI defaults the local stack to **ES256**, the `[auth]` signing-key configuration must
+  be set deliberately if HS256-local is wanted (no dedicated `jwt_algorithm` toggle exists as of
+  Jan 2026 — supabase/cli#4726). Still confirm `major_version` matches the Postgres bundled with
+  the installed CLI.
+- **Resolved — email confirmation in local DX → `enable_confirmations = false` locally** so
+  signup→login is one step (the right default for the template demo). If a product wants to
   exercise the confirmation flow locally, flip it on and use **Inbucket** (port 54324) to read
-  the link.
+  the link; hosted staging/production enforce confirmation via the dashboard.
 - **Deferred to Phase 8:** Realtime broadcast-and-invalidate (`core/realtime.ts`), the push
   loop (`/v1/push-tokens` + `send_push`), Sentry/structlog observability, the web E2E
   (signup→login→items→realtime) and Maestro mobile-auth flow, and all CI workflows. Phase 6

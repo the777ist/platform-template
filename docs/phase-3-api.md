@@ -7,8 +7,9 @@ AND data access) → `schemas/` (Pydantic v2 DTOs = the API contract) ↔ `route
 map schema↔domain). UUIDv7 PKs on a SQLModel base; RFC 9457 problem+json errors; cursor
 pagination (`useInfiniteQuery`-ready); env-driven CORS allowlist + security headers +
 slowapi rate limiting; request_id middleware scaffold; `/healthz` + `/v1/hello` +
-`/v1/me` stub + `/v1/items` CRUD + `/v1/push-tokens`; JWKS-based auth with HS256 local
-fallback; psycopg3 + NullPool over the pooler (6543) with Alembic migrating over the
+`/v1/me` stub + `/v1/items` CRUD + `/v1/push-tokens`; JWKS-based auth (primary on ALL
+environments, including local — the current Supabase CLI issues ES256) with HS256 as a
+genuine fallback only; psycopg3 + NullPool over the pooler (6543) with Alembic migrating over the
 direct port (5432); an initial Alembic migration that creates the tables AND sets **RLS
 deny-all**; `seed.py`; polyfactory factories; pyright strict + Pydantic strict; a
 multi-stage uv Dockerfile; staging/production fly tomls; pytest against **real Postgres**
@@ -138,10 +139,10 @@ version = "0.0.0"
 description = "Template product FastAPI service"
 requires-python = ">=3.13"
 dependencies = [
-  "fastapi",
+  "fastapi==0.124.4",              # current stable (2025-12-12); uses lifespan, not on_event
   "uvicorn[standard]",
   "pydantic-settings",
-  "sqlmodel",
+  "sqlmodel==0.0.27",              # pre-1.0 — pin exact; Pydantic v2 + SQLAlchemy 2 compatible
   "sqlalchemy[postgresql-psycopg]",
   "psycopg[binary]",
   "alembic",
@@ -149,17 +150,17 @@ dependencies = [
   "httpx",
   "sentry-sdk[fastapi]",
   "structlog",
-  "slowapi",
-  "uuid7",                 # uuid7() generator; see ⚠️ note below
+  "slowapi==0.1.9",                # ⚠️ REVIEW: pin to the current slowapi release (self-described "alpha" — pin exact)
+  "uuid-utils==0.10.0",            # ⚠️ REVIEW: pin to the exact current uuid-utils release. Maintained UUIDv7 generator (Rust-backed, returns a stdlib-compatible UUID). Alt: uuid6. See note below.
 ]
 
 [dependency-groups]
 dev = [
-  "pytest",
-  "pytest-asyncio",
-  "ruff",
+  "pytest==9.0.3",                 # current (April 2026)
+  "pytest-asyncio==1.4.0",         # 1.x defaults to asyncio_mode="strict" → markers required (configured below)
+  "ruff==0.15.0",                  # current (2026-02-03)
   "pyright",
-  "polyfactory",
+  "polyfactory",                   # current 2.x line — pin exact when locking
 ]
 
 [build-system]
@@ -186,15 +187,20 @@ venv = ".venv"
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+asyncio_mode = "strict"          # pytest-asyncio 1.x: pin behavior; async tests need @pytest.mark.asyncio
 ```
 
-> ⚠️ **OPEN / TO CONFIRM (UUIDv7 source):** PLAN.md mandates **UUIDv7 PKs** but does not
-> pin the generator library. Options that work on Python 3.13: the `uuid7` PyPI package
-> (`from uuid_extensions import uuid7`), `uuid6` (`uuid7()`), or a small inline RFC 9562
-> implementation. This guide imports `uuid7` from the base model in Step 6; swap the import
-> to the chosen library and pin it exact in `pyproject.toml` (pre-1.0 hygiene). Postgres 18
-> has native `uuidv7()` — if the deployment targets PG18 the DB-side default can replace the
-> Python generator; **confirm the Supabase Postgres version**.
+> **UUIDv7 source (resolved):** Python 3.13 has **no** stdlib `uuid7` — `uuid.uuid7()` /
+> UUID versions 6/7/8 (RFC 9562) only land in **Python 3.14**, so a third-party library is
+> mandatory here. Use the maintained **`uuid-utils`** (`from uuid_utils import uuid7`,
+> Rust-backed, returns a stdlib-compatible `UUID`, actively maintained) — pinned exact — as
+> in Step 6. The alternative is **`uuid6`** (`from uuid6 import uuid7`). Do **NOT** use the
+> PyPI `uuid7` package / `from uuid_extensions import uuid7`: that dist's last release was
+> 2021, it is effectively unmaintained, and its `uuid7()` predates the final RFC 9562 layout.
+> (A *different* maintained package `uuid-extension` imports as `from uuid_extension import
+> uuid7` — singular — do not confuse the two.) Postgres 18 has native `uuidv7()` — if the
+> deployment targets PG18 the DB-side default could replace the Python generator; **confirm
+> the Supabase Postgres version**.
 
 `package.json` (script shim only — Python is per-product isolated; the shim lets Turborepo
 orchestrate `uv run` tasks in the same graph):
@@ -324,9 +330,12 @@ from .settings import get_settings
 
 
 def _make_engine(url: str) -> Engine:
-    # Key ruling #4: pooler port 6543 is transaction-mode only (session mode removed 2025),
-    # which breaks server-side prepared statements. psycopg v3 + prepare_threshold=None
-    # disables them; NullPool means we don't double-pool on top of Supabase's pooler.
+    # Key ruling #4: runtime app traffic uses the TRANSACTION-mode pooler (6543) for
+    # serverless-friendly autoscaling. Supavisor reassigns connections per-transaction, so it
+    # does not reliably keep server-side prepared statements. psycopg v3 + prepare_threshold=None
+    # disables them; NullPool means we don't double-pool on top of Supavisor. Session mode and
+    # direct connections live on 5432 (NOT removed) but aren't used for runtime traffic; Alembic
+    # uses the direct 5432 URL.
     return create_engine(
         url,
         poolclass=NullPool,
@@ -509,11 +518,14 @@ class Page(BaseModel, Generic[T]):
     next_cursor: str | None = None
 ```
 
-> ⚠️ **OPEN / TO CONFIRM (cursor field names):** PLAN.md fixes cursor pagination and
-> `useInfiniteQuery`-readiness but does not pin the envelope field names. This guide uses
-> `{ items, next_cursor }` and an **opaque base64 cursor keyed on `id`** (UUIDv7 is
-> time-ordered, so `WHERE id > :after ORDER BY id LIMIT :n+1` is a stable keyset). Phase 4's
-> `features/home` must match these names. Confirm before stamping `demo`.
+> **Cursor field names (resolved):** keep `{ items, next_cursor }` with an **opaque base64
+> cursor keyed on `id`** — this matches current best practice (`next_cursor` is the
+> conventional response field; clients treat the cursor as opaque) and UUIDv7 is the endorsed
+> monotonic keyset column (`WHERE id > :after ORDER BY id LIMIT :n+1`, fetch `limit+1` to detect
+> `has_more`). Postgres `uuid` ordering is bytewise and matches UUIDv7's big-endian time
+> ordering, so `ORDER BY id` agrees with Python's UUID comparison. Phase 4's `features/home`
+> must use these exact names. (If a product ever sorts by a key other than `id`, the cursor must
+> encode the full sort tuple — the single-`after` cursor assumes `id` ordering.)
 
 **Commands:** none.
 
@@ -535,7 +547,7 @@ from uuid import UUID
 
 from sqlalchemy import func
 from sqlmodel import Column, DateTime, Field, SQLModel
-from uuid_extensions import uuid7  # ⚠️ see Step 1 OPEN note on the UUIDv7 source
+from uuid_utils import uuid7  # maintained UUIDv7 generator (or: from uuid6 import uuid7)
 
 
 def _utcnow() -> datetime:
@@ -599,8 +611,13 @@ __all__ = ["UUIDModel", "Item", "PushToken"]
 **Commands:** none.
 
 **Why:** models are **persistence only** (Key ruling #10) — no business logic, no
-serialization. UUIDv7 PKs are the locked DB convention; the time-ordered property is what
-makes the cursor pagination keyset stable. `push_token` carries the per-user+device row
+serialization. UUIDv7 PKs are the locked DB convention (generated via the maintained
+`uuid-utils`/`uuid6`, NOT the stale `uuid7`/`uuid_extensions` package — see Step 1); the
+time-ordered property is what makes the cursor pagination keyset stable. ⚠️ REVIEW: confirm
+`uuid_utils.uuid7()` coerces into the stdlib-`UUID`-typed `id` column under pyright strict +
+Pydantic strict; if the chosen lib returns its own UUID subtype, wrap with `uuid.UUID(str(...))`
+in the `default_factory` or switch to `uuid6` (which returns a stdlib `uuid.UUID`).
+`push_token` carries the per-user+device row
 PLAN.md specifies for the push loop. These tables are created by the initial Alembic
 migration (Step 20), never by `SQLModel.metadata.create_all` in production.
 
@@ -719,19 +736,29 @@ class PushService(BaseService):
         self.session.refresh(existing)
         return PushTokenRead.model_validate(existing)
 
-    async def send_push(self, *, user_id: str, title: str, body: str) -> None:
+    async def send_push(
+        self, *, user_id: str, title: str, body: str, http: httpx.AsyncClient | None = None
+    ) -> None:
+        # A scalar-column select via .exec() is fine (only delete()/update() are unsupported).
         tokens = self.session.exec(
             select(PushToken.expo_token).where(PushToken.user_id == user_id)
         ).all()
         if not tokens:
             return
         messages = [{"to": t, "title": title, "body": body} for t in tokens]
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(get_settings().expo_push_url, json=messages)
+        # Injectable client so unit tests can pass an httpx.AsyncClient(transport=MockTransport(...))
+        # without monkeypatching (aligns with Phase 8 test_push.py).
+        if http is not None:
+            await http.post(get_settings().expo_push_url, json=messages)
+        else:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(get_settings().expo_push_url, json=messages)
 
     def prune_stale(self, *, older_than_days: int = 60) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-        result = self.session.exec(delete(PushToken).where(PushToken.updated_at < cutoff))
+        # DELETE/UPDATE go through Session.execute() — SQLModel's exec() only types select()
+        # (delete()/update() break pyright strict AND don't expose .rowcount). Key ruling DB.
+        result = self.session.execute(delete(PushToken).where(PushToken.updated_at < cutoff))
         self.session.commit()
         return result.rowcount or 0
 ```
@@ -864,7 +891,10 @@ def _jwks_client(jwks_url: str) -> PyJWKClient:
 
 
 def _decode(token: str, settings: Settings) -> dict[str, object]:
-    # New Supabase projects sign with asymmetric keys -> verify via JWKS (ES256/RS256).
+    # PRIMARY path on ALL environments (incl. local): verify via JWKS (ES256/RS256). New
+    # Supabase projects sign asymmetrically by default, and the local CLI now ALSO issues
+    # ES256 by default (since CLI v2.71.1) — so point SUPABASE_URL at http://localhost:54321
+    # locally and let PyJWKClient hit the local /auth/v1/.well-known/jwks.json too. (Ruling #5)
     if settings.supabase_url is not None:
         jwks_url = f"{str(settings.supabase_url).rstrip('/')}/auth/v1/.well-known/jwks.json"
         try:
@@ -876,8 +906,10 @@ def _decode(token: str, settings: Settings) -> dict[str, object]:
                 audience=settings.jwt_audience,
             )
         except jwt.PyJWTError:
-            pass  # fall through to HS256 (local CLI stack issues HS256)
-    # HS256 + SUPABASE_JWT_SECRET local fallback (Supabase CLI stack).
+            pass  # fall through to the HS256 genuine fallback
+    # HS256 + SUPABASE_JWT_SECRET — GENUINE FALLBACK ONLY (older CLI, self-hosted symmetric
+    # secret, manually-minted test tokens). NOT the local happy path: a current CLI issues
+    # ES256, so the JWKS branch above is what handles local tokens.
     if settings.supabase_jwt_secret is not None:
         return jwt.decode(
             token,
@@ -911,10 +943,19 @@ CurrentUser = Annotated[MeRead, Depends(get_current_user)]
 **Commands:** none.
 
 **Why:** encodes Key ruling #5 exactly — JWKS `PyJWKClient` (cached) for asymmetric
-ES256/RS256 with `audience="authenticated"`, plus the HS256 + `SUPABASE_JWT_SECRET` local
-fallback because the Supabase CLI stack still issues HS256. `CurrentUser` is the dependency
-routers attach to protected endpoints; full auth screens + guards land in Phase 6, but the
-backend verification is built here so `/v1/me` and owner-scoped items work.
+ES256/RS256 with `audience="authenticated"` is the **PRIMARY path on ALL environments,
+including local** (the current Supabase CLI issues ES256 by default, so point `SUPABASE_URL`
+at `http://localhost:54321` and let `PyJWKClient` hit the local JWKS endpoint). HS256 +
+`SUPABASE_JWT_SECRET` is a **genuine fallback only** (older CLI / self-hosted symmetric
+secret / manually-minted test tokens) — it is NOT the local happy path. (A backend that
+trusts only HS256 locally would 401 every request on a current CLI.) `pyjwt[crypto]` is
+required for ES256/RS256. `CurrentUser` is the dependency routers attach to protected
+endpoints; full auth screens + guards land in Phase 6, but the backend verification is built
+here so `/v1/me` and owner-scoped items work.
+
+> ⚠️ **REVIEW (JWKS path):** confirm the JWKS discovery path
+> `{supabase_url}/auth/v1/.well-known/jwks.json` against the live project at integration time
+> (Phase 6) — it has historically matched, but verify when the project exists.
 
 ---
 
@@ -926,6 +967,7 @@ backend verification is built here so `/v1/me` and owner-scoped items work.
 ```python
 from collections.abc import Awaitable, Callable
 
+import jwt
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
@@ -935,10 +977,21 @@ from .settings import get_settings
 
 
 def _rate_key(request: Request) -> str:
-    # Per-user when authenticated, else per-IP (PLAN: per-IP + per-user).
+    # Per-user when authenticated, else per-IP (PLAN: per-IP + per-user). Key on the verified
+    # JWT `sub` claim — a token slice would key per-TOKEN (a refreshed token = a new bucket),
+    # not per-USER. An unverified decode here is acceptable: the real auth dependency verifies
+    # the same token on the protected route; this is only for choosing a rate-limit bucket.
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        return f"user:{auth[-24:]}"
+        try:
+            claims = jwt.decode(
+                auth.removeprefix("Bearer "), options={"verify_signature": False}
+            )
+            sub = claims.get("sub")
+            if isinstance(sub, str):
+                return f"user:{sub}"
+        except jwt.PyJWTError:
+            pass
     return f"ip:{get_remote_address(request)}"
 
 
@@ -981,10 +1034,13 @@ and slowapi rate limiting (per-IP + per-user) — every product inherits these d
 limiter is instantiated here and attached to `app.state` in `main.py`; the 429 it raises is
 rendered as problem+json by the handler in Step 4.
 
-> ⚠️ **OPEN / TO CONFIRM (per-user rate key):** keying on a slice of the bearer token is a
-> placeholder to avoid decoding the JWT in the limiter hot path. A cleaner key is the
-> verified `sub` claim, but that couples the limiter to auth. Confirm the desired tradeoff;
-> the slowapi `default_limits` value (`100/minute`) is also a placeholder default.
+> **Per-user rate key (resolved):** key on the JWT **`sub`** claim, not a token slice — a
+> token slice keys per-*token* (a refreshed token = a new bucket) and is effectively random
+> per signature, not per user. Decoding the bearer with `options={"verify_signature": False}`
+> *only to extract `sub` for bucketing* is acceptable: the real auth dependency verifies the
+> same token on the protected route, so this unverified read never grants access — it just
+> picks a bucket. Fall back to `get_remote_address` for anonymous requests. The `100/minute`
+> `default_limits` value is a sane env-driven default (`rate_limit_default`); tune per product.
 
 ---
 
@@ -1515,10 +1571,15 @@ the schema private; the API's privileged role bypasses RLS so the service layer 
 and writes. `FORCE ROW LEVEL SECURITY` ensures even the table owner is subject to policies
 (defense in depth). This is the foundation of the broadcast-only Realtime pattern.
 
-> ⚠️ **OPEN / TO CONFIRM (privileged role):** PLAN.md says "the API's privileged role
-> bypasses it" but does not name the role. On Supabase, connecting as `postgres` (or a role
-> with `BYPASSRLS`) achieves this; `DATABASE_URL`/`DATABASE_MIGRATION_URL` must use such a
-> role. Confirm the exact role/credentials when the Supabase project exists.
+> **Privileged role (resolved):** connect `DATABASE_URL` / `DATABASE_MIGRATION_URL` as the
+> Supabase **`postgres`** role, which has **`BYPASSRLS`**. `BYPASSRLS` (and superuser) skip RLS
+> *even with* `FORCE ROW LEVEL SECURITY`, so the service layer's own queries still read/write
+> `item`/`push_token` after the deny-all migration, while the anon/authenticated roles
+> PostgREST + Realtime use get nothing. Do NOT connect as `authenticated`/`anon` (they would be
+> blocked by the deny-all). `FORCE` is redundant for a `BYPASSRLS` connection but kept for
+> defense-in-depth. Confirm the exact credentials when the Supabase project exists, and add an
+> integration test that reads `item` back after the deny-all migration to prove the runtime
+> role bypasses (⚠️ REVIEW: exact role/credentials are project-specific).
 
 ---
 
@@ -1667,9 +1728,18 @@ def engine() -> Engine:
 def session(engine: Engine) -> Generator[Session, None, None]:
     # Per-test transaction rollback: open a connection + outer transaction, bind the
     # Session to it, roll back at teardown so each test sees a clean DB. Never mock the session.
+    #
+    # CRITICAL (SQLAlchemy 2.0): services call self.session.commit(), and in 2.0 commit()
+    # commits the OUTERMOST transaction — so without join_transaction_mode the service's
+    # commit() would commit the outer `trans` the fixture means to roll back, the teardown
+    # rollback would undo nothing, and rows would leak across tests (e.g. the 25-item cursor
+    # test pollutes later tests). Binding with join_transaction_mode="create_savepoint" makes
+    # each application-level commit() land on a SAVEPOINT inside the outer transaction, so the
+    # outer rollback discards everything. (Alternative: begin_nested() + an after_transaction_end
+    # restart listener.)
     connection = engine.connect()
     trans = connection.begin()
-    with Session(bind=connection) as s:
+    with Session(bind=connection, join_transaction_mode="create_savepoint") as s:
         yield s
     trans.rollback()
     connection.close()
@@ -1720,15 +1790,27 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 **Why:** the Testing strategy rows — API integration runs **pytest + httpx against real
 Postgres** (Supabase local in dev, **postgres service container** in CI) with **per-test
 transaction rollback**, exercising UUIDv7 + real SQL; **polyfactory** supplies test data.
-The session is overridden into a rollback-bound transaction and is **never mocked** for
-integration. The `auth_client` override lets router tests run without minting JWTs (real JWT
-paths are tested directly in `test_auth.py`).
+The session is overridden into a rollback-bound transaction (with
+`join_transaction_mode="create_savepoint"`, so service `commit()` calls land on a savepoint
+the outer rollback discards — see the inline note) and is **never mocked** for integration.
+The `auth_client` override lets router tests run without minting JWTs (real JWT paths are
+tested directly in `test_auth.py`).
 
-> ⚠️ **OPEN / TO CONFIRM (test schema build):** using `SQLModel.metadata.create_all` in the
-> test engine is simpler than running Alembic per test session and is fine because the test
-> role doesn't need the RLS-deny-all (it owns/bypasses the test DB). If a test must verify
-> the migration itself (RLS present), add a separate test that runs `alembic upgrade head`
-> against the test URL. Confirm which is wanted.
+> **Sync `TestClient` is correct here** — it is built on httpx and is unaffected by the
+> deprecation of the `app=` shortcut. If a future test needs to drive an `async def` router
+> over HTTP, use `httpx.AsyncClient(transport=ASGITransport(app=app))` (the `AsyncClient(app=...)`
+> shortcut was removed in httpx 0.27 — never `AsyncClient(app=app)`), under
+> `@pytest.mark.asyncio`. `send_push()` is already covered by calling the coroutine directly
+> with an injected mock-transport client (Phase 8 `test_push.py`).
+
+> **Test schema build (resolved):** `SQLModel.metadata.create_all(engine)` for the test DB is
+> fine and faster than running Alembic per session, since the test role owns/bypasses RLS.
+> **But `create_all` silently skips the RLS deny-all** — those are raw `op.execute(...)`
+> statements in the migration, not in the metadata — so the migration's most important effect
+> goes untested. Add **one** dedicated test that runs `alembic upgrade head` against the test
+> URL and asserts RLS is on, e.g.
+> `SELECT relrowsecurity FROM pg_class WHERE relname IN ('item','push_token')` returns true for
+> both. Keep `create_all` for all other tests.
 
 ---
 
@@ -1783,7 +1865,9 @@ def test_unauthenticated_is_401_problem_json(client: TestClient) -> None:
     assert resp.headers["content-type"].startswith("application/problem+json")
 ```
 
-`test_auth.py` (JWT paths — unit-level, mock external HTTP per mocking conventions):
+`test_auth.py` (JWT paths — unit-level, mock external HTTP per mocking conventions). NOTE:
+these mint HS256 tokens directly to exercise the fallback branch; they stay valid but no
+longer mirror the live local stack (a current Supabase CLI issues ES256 → the JWKS branch):
 ```python
 import datetime as dt
 
@@ -1840,26 +1924,39 @@ pnpm --filter @platform/template-api test
 
 **Why:** covers the Testing strategy API rows — service/router CRUD round-trips, cursor
 paging edges, **problem+json shapes**, **401s**, and **DTO/ORM separation** (asserting the
-response body keys are exactly the DTO fields). `test_auth.py` exercises the HS256 local
-fallback + failure paths (JWKS path needs a live/mocked JWKS endpoint — covered in Phase 6
-against the Supabase local stack). External HTTP (Expo Push) is mocked via httpx mock
-transport in push tests; integration tests hit the real DB.
+response body keys are exactly the DTO fields). `test_auth.py` mints HS256 tokens directly
+and exercises the HS256 fallback branch + failure paths; **these tests stay valid** (they
+verify the fallback logic itself) but **note: they no longer mirror the live local stack** —
+a current Supabase CLI issues ES256, so the real local happy path is the JWKS branch (which
+needs a live/mocked JWKS endpoint — covered in Phase 6 against the Supabase local stack).
+External HTTP (Expo Push) is mocked via httpx mock transport in push tests; integration tests
+hit the real DB.
 
 ---
 
 ## Gotchas & pitfalls
 
-- **Pooler 6543 is transaction-mode-only + psycopg3.** Session mode was removed in 2025, so
-  asyncpg-style server-side prepared statements break. Runtime MUST use **psycopg v3**
+- **Pooler 6543 is transaction-mode; use psycopg3.** Runtime app traffic goes over the
+  **transaction-mode** Supavisor pooler (6543) for serverless-friendly autoscaling; it does
+  not reliably keep server-side prepared statements (connections are reassigned per
+  transaction), so they break. (Correction: session mode was **NOT removed** — Supavisor
+  deprecated session mode *on the 6543 pooler* on 2025-02-28; session mode and direct
+  connections still live on **5432**. The 2024 event was the PgBouncer→Supavisor migration +
+  IPv4 deprecation for direct connections.) Runtime MUST use **psycopg v3**
   (`postgresql+psycopg://`), **`NullPool`**, and **`connect_args={"prepare_threshold": None}`**.
-  Symptom if wrong: intermittent `prepared statement "__asyncpg_..." does not exist` /
-  `DuplicatePreparedStatement` errors under the pooler. (Key ruling #4.)
+  Symptom if wrong: intermittent `prepared statement "..." does not exist` /
+  `DuplicatePreparedStatement` errors under the pooler. NullPool has a documented latency cost
+  (≈200ms default-pool vs ≈800ms NullPool in one benchmark) — acceptable for the template;
+  note it for high-throughput products. (Key ruling #4.)
 - **Alembic MUST use the direct 5432 URL.** Migrations run DDL in transactions that the
   transaction-mode pooler mishandles. `env.py` reads `DATABASE_MIGRATION_URL` (5432), and
   the Fly `release_command` runs over it — never point Alembic at 6543. (Key ruling #4.)
-- **JWKS vs HS256 local.** New Supabase projects sign asymmetrically (verify via JWKS,
-  ES256/RS256, cached `PyJWKClient`); the **local CLI stack still issues HS256**, so the
-  `SUPABASE_JWT_SECRET` fallback is required for local dev/tests. Always set
+- **JWKS is primary everywhere; HS256 is a genuine fallback only.** New Supabase projects
+  sign asymmetrically AND the current local CLI (v2.71.1+) issues **ES256** by default — so
+  JWKS verification (`PyJWKClient`, ES256/RS256, cached) is the **primary path on ALL
+  environments, including local** (point `SUPABASE_URL` at `http://localhost:54321`). HS256 +
+  `SUPABASE_JWT_SECRET` is kept ONLY for older CLIs, self-hosted symmetric secrets, and
+  manually-minted test tokens — it is NOT the local happy path. Always set
   `audience="authenticated"`. (Key ruling #5.)
 - **DTOs never serialize ORM models.** Routers return `schemas/` DTOs only; services call
   `ItemRead.model_validate(orm_row)` (`from_attributes=True`) to map. Returning a SQLModel
@@ -1993,18 +2090,26 @@ Suggested commit sequence on a feature branch (one phase = one or a few logical 
 
 ## Open questions / deferred
 
-- **⚠️ UUIDv7 generator library** — pin the chosen source (`uuid7` / `uuid6` / inline RFC
-  9562 / native PG18 `uuidv7()`); confirm the Supabase Postgres version (Step 1, Step 6).
-- **⚠️ Cursor envelope field names** — `{ items, next_cursor }` + opaque base64-on-`id`
-  cursor assumed; Phase 4 `features/home` must match (Step 5).
-- **⚠️ Per-user rate-limit key** — token-slice placeholder vs verified `sub`; and the
-  `default_limits` value (Step 10).
-- **⚠️ Privileged/BYPASSRLS role** — the exact DB role/credentials the API connects with to
-  bypass RLS, set when the Supabase project exists (Step 20).
+- **UUIDv7 generator library — RESOLVED** — use the maintained **`uuid-utils`**
+  (`from uuid_utils import uuid7`, returns a stdlib-compatible UUID) or **`uuid6`**
+  (`from uuid6 import uuid7`), pinned exact; NOT the stale 2021 `uuid7`/`uuid_extensions`
+  package (Python 3.13 has no stdlib `uuid7` — that lands in 3.14). The only remaining ⚠️
+  REVIEW is the exact pinned version and whether PG18's native `uuidv7()` should replace the
+  Python generator (depends on the Supabase Postgres version) (Step 1, Step 6).
+- **Cursor envelope field names — RESOLVED** — keep `{ items, next_cursor }` + opaque
+  base64-on-`id`; matches best practice + UUIDv7 monotonic keyset. Phase 4 `features/home` must
+  match these names (Step 5).
+- **Per-user rate-limit key — RESOLVED** — key on the verified-decode JWT **`sub`** claim
+  (unverified decode for bucketing only; real auth verifies elsewhere), fall back to IP for
+  anonymous; `100/minute` stays the env-driven default (Step 10).
+- **Privileged/BYPASSRLS role — RESOLVED** — connect as the Supabase **`postgres`** role
+  (`BYPASSRLS`, bypasses even `FORCE RLS`); ⚠️ REVIEW the exact credentials when the project
+  exists, and add a read-after-deny-all integration test (Step 20).
 - **⚠️ export_openapi output path depth** (`parents[3]`) — verify against the final layout;
-  Phase 4 reads `../api/openapi.json` (Step 17).
-- **⚠️ Test schema build** — `metadata.create_all` vs running Alembic in tests; add a
-  migration-applies-RLS test if that behavior must be asserted (Step 23).
+  Phase 4 reads `../api/openapi.json` (Step 17). *(Out of domain for this review.)*
+- **Test schema build — RESOLVED** — keep `SQLModel.metadata.create_all` for the test DB;
+  add ONE test running `alembic upgrade head` + asserting `relrowsecurity` is true for
+  `item`/`push_token`, since `create_all` skips the raw RLS statements (Step 23).
 - **Deferred to Phase 4** — `api-client/` generation, turbo openapi→client→app ordering,
   the contract drift check.
 - **Deferred to Phase 6** — Supabase local stack wiring, real JWKS verification against the

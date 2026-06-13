@@ -28,7 +28,7 @@ mechanisms are established here.
 - Expo Go on device shows the same themed components;
 - `turbo run export:web` + `npx serve dist` serves the SPA build;
 - `turbo run test` runs the RNTL test.
-- **Settles NativeWind v4 ↔ SDK 56 compat; fallback = SDK 55.**
+- **Settles NativeWind v4 ↔ SDK 56 compat; safe-harbor fallback = SDK 54 (NOT 55).**
 
 ---
 
@@ -37,9 +37,10 @@ mechanisms are established here.
 Phase 1 is **complete** and committed. The following already exist and must NOT be
 recreated here (only consumed/extended):
 
-- `mise.toml` (Node 22, pnpm 10, Python 3.13, uv); `mise install` run.
-- `.npmrc` with `node-linker=hoisted` (Key ruling **#6** — never set
-  `disableHierarchicalLookups`).
+- `mise.toml` (Node 24 LTS, pnpm 11, Python 3.13, uv); `mise install` run.
+- `pnpm-workspace.yaml` carries `nodeLinker: hoisted` (pnpm 11 relocated this setting out of
+  `.npmrc`; `.npmrc` is auth/registry-only) — Key ruling **#6**; never set
+  `disableHierarchicalLookups`.
 - `pnpm-workspace.yaml` with globs `packages/*` and
   `products/*/{app,desktop,api,api-client}`.
 - `package.json` (root) with `turbo`, `prettier`, `lefthook` devDeps and a
@@ -145,8 +146,8 @@ packages/ui/CLAUDE.md                 # design-system runbook
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "tailwind-merge": "2.6.0",
-    "@rn-primitives/slot": "1.2.0",
-    "@rn-primitives/types": "1.2.0"
+    "@rn-primitives/slot": "1.4.0",
+    "@rn-primitives/types": "1.4.0"
   },
   "peerDependencies": {
     "nativewind": "*",
@@ -159,10 +160,14 @@ packages/ui/CLAUDE.md                 # design-system runbook
 }
 ```
 
-> ⚠️ OPEN / TO CONFIRM: exact `@rn-primitives/*` and cva/tailwind-merge versions above are
-> indicative — pin to whatever the react-native-reusables CLI emits at adoption time, then
-> freeze (exact, no caret). PLAN.md mandates "pin `@rn-primitives/*` exact" but does not
-> name versions.
+> The `@rn-primitives/*` pins above are **1.4.x** (current `latest`, June 2026 — slot, types,
+> portal all at 1.4.0); these packages are **past 1.0**, so the pin-exact rationale is
+> **version-coupling to react-native-reusables** (rn-reusables components couple to specific
+> primitive releases and minor bumps can shift behavior), NOT pre-1.0 instability. Pin to
+> whatever the react-native-reusables CLI emits at adoption time, then freeze (exact, no
+> caret). `class-variance-authority 0.7.1` and `clsx 2.1.1` are current; `tailwind-merge`
+> stays on the **2.6.x** line — do NOT bump to 3.x, which assumes Tailwind v4 (this stack is
+> Tailwind v3 / NativeWind v4).
 
 `packages/ui/tsconfig.json`:
 
@@ -363,11 +368,20 @@ export { themes, type Theme } from "./lib/theme";
 ```bash
 mkdir -p packages/ui/src/components/ui packages/ui/src/lib
 # Adopt react-native-reusables primitives via its CLI (copies OWNED source).
-# Run from packages/ui so files land in src/components/ui:
+# Project = founded-labs/react-native-reusables (moved from mrzachnugent); CLI is
+# @react-native-reusables/cli (latest 0.7.1). Run from packages/ui so files land in
+# src/components/ui:
 pnpm --filter @platform/ui dlx @react-native-reusables/cli@latest add text button input card
 # Reconcile the CLI output into the shadcn shape above; then:
 pnpm --filter @platform/ui exec tsc --noEmit
 ```
+
+> rn-reusables now supports **both NativeWind and Uniwind**. When the CLI/`init` prompts,
+> select the **NativeWind (v4) path**, NOT Uniwind/CSS-first — otherwise the emitted config
+> won't match this stack's `tailwind.config.js` preset. Since the source is reconciled by
+> hand into owned components, engine selection mainly affects the CLI's generated config
+> (which the app overrides anyway). If `cli add` errors under pnpm (it shells out to
+> `shadcn@latest` — known issue), author the component by hand into the shadcn shape above.
 
 > The `@/` import alias (`@/lib/utils`, `@/components/ui/text`) is the react-native-reusables
 > convention; map it in `packages/ui/tsconfig.json` `compilerOptions.paths` (`"@/*": ["src/*"]`)
@@ -570,43 +584,73 @@ packages/ui/src/components/ui/input.stories.tsx
 packages/ui/src/components/ui/card.stories.tsx
 ```
 
-Add Storybook devDeps to `packages/ui/package.json` (exact pins indicative — freeze to the
-installed versions): `storybook`, `@storybook/react-native-web-vite`,
-`@storybook/react-vite`, `vite`, `@vitejs/plugin-react`, `react-native-web`,
-`@tailwindcss/vite` (or `postcss` + `tailwindcss` + `autoprefixer` for the `global.css`
-build step).
+Target **Storybook 9 (9.1.x)** (PLAN.md locked call — chosen over ESM-only Storybook 10 for
+broadest RN-web-vite + NativeWind compat). Add Storybook devDeps to
+`packages/ui/package.json` (exact pins — freeze to the installed 9.1.x versions):
+`storybook` (9.1.x), `@storybook/react-native-web-vite` (9.1.x), `vite`, `react`,
+`react-dom`, `react-native-web` (via `expo install`), and the Tailwind toolchain for the
+`global.css` step — for **Tailwind v3 / NativeWind v4** that is `postcss` + `tailwindcss@^3.4`
++ `autoprefixer` (NOT `@tailwindcss/vite`, which is the Tailwind v4 path).
+
+> Do NOT separately install `@storybook/react-vite`, `@storybook/react`, or
+> `@vitejs/plugin-react` — `@storybook/react-native-web-vite` depends on all three (plus
+> `vite-plugin-rnw` and `vite-tsconfig-paths`) and pins its own sibling versions. Listing
+> them explicitly only risks drifting out of lockstep with the framework.
 
 **Contents**
 
-`packages/ui/.storybook/main.ts`:
+`packages/ui/.storybook/main.ts` — NativeWind is wired through the **framework options**
+(`pluginReactOptions.jsxImportSource: "nativewind"`), NOT a CSS import alone; the bundled
+`vite-plugin-rnw` already aliases `react-native` → `react-native-web`, so **no manual
+`react-native` alias** is needed (only the `@` → `src` alias for the component-import
+convention):
 
 ```ts
 import type { StorybookConfig } from "@storybook/react-native-web-vite";
 import path from "node:path";
 
 const config: StorybookConfig = {
-  framework: "@storybook/react-native-web-vite",
+  framework: {
+    name: "@storybook/react-native-web-vite",
+    options: {
+      pluginReactOptions: {
+        jsxRuntime: "automatic",
+        jsxImportSource: "nativewind",
+      },
+    },
+  },
   stories: ["../src/**/*.stories.tsx"],
   addons: [],
   viteFinal: async (cfg) => {
+    // react-native -> react-native-web is handled by the framework's bundled
+    // vite-plugin-rnw — do NOT add a manual alias. Only the @ -> src alias is needed.
     cfg.resolve = cfg.resolve ?? {};
     cfg.resolve.alias = {
       ...(cfg.resolve.alias ?? {}),
-      "react-native": "react-native-web",
       "@": path.resolve(__dirname, "../src"),
     };
+    // Run the Tailwind v3 pipeline on global.css (PostCSS + tailwindcss@^3.4 + autoprefixer).
+    // global.css is imported in preview.tsx; ensure a postcss.config.js with the
+    // tailwindcss + autoprefixer plugins exists so NativeWind utilities resolve.
     return cfg;
   },
 };
 export default config;
 ```
 
+> ⚠️ NativeWind-in-RNW-Vite-Storybook is a known finicky integration (Storybook issue
+> **#32018**): it needs **all** of (1) `jsxImportSource: "nativewind"` in the framework
+> options, (2) `global.css` imported (preview.tsx, below), and (3) an actual Tailwind CSS
+> pipeline in Vite (PostCSS + `tailwindcss@^3.4` + `autoprefixer` for Tailwind v3). Missing
+> any one and `className`/NativeWind utilities silently fail to render. The reference setup
+> is `dannyhw/vite-rnw-example` (NativeWind v4 + Tailwind v3 + autoprefixer).
+
 `packages/ui/.storybook/preview.tsx` — imports `global.css`, wraps every story in the
 theme provider, declares `theme` + `brand` toolbar globals:
 
 ```tsx
 import * as React from "react";
-import type { Preview, Decorator } from "@storybook/react";
+import type { Preview, Decorator } from "@storybook/react-native-web-vite";
 import "../src/global.css";
 import { ThemeProvider } from "../src/theme-provider";
 
@@ -677,7 +721,7 @@ export default preview;
 `packages/ui/src/components/ui/button.stories.tsx` — **one story per cva variant**:
 
 ```tsx
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-native-web-vite";
 import { Button } from "./button";
 
 const meta: Meta<typeof Button> = {
@@ -707,9 +751,8 @@ pnpm --filter @platform/ui storybook        # dev server on :6006
 pnpm --filter @platform/ui build-storybook  # -> storybook-static/ + index.json
 ```
 
-> ⚠️ OPEN / TO CONFIRM: Storybook dev port. PLAN.md fixes **8081 for the app** (Expo). The
-> Storybook port is unspecified; `6006` (Storybook default) is used above to avoid a clash
-> with 8081. Confirm if a different port is desired.
+> Storybook dev port: **6006** (Storybook's default) — confirmed not to clash with the app's
+> fixed **8081** (Expo). Resolved; keep 6006.
 
 **Why** — PLAN.md "Design system workbench" bullet + "Storybook" gotcha: a SINGLE shared
 workbench in `packages/ui` renders the SAME RN components through react-native-web
@@ -729,7 +772,7 @@ packages/ui/src/components/ui/button.figma.tsx
 packages/ui/src/components/ui/text.figma.tsx
 packages/ui/src/components/ui/input.figma.tsx
 packages/ui/src/components/ui/card.figma.tsx
-.figma/                               # Code Connect CLI config (repo root, per tree)
+figma.config.json                     # Code Connect CLI config — MUST be at REPO ROOT
 ```
 
 **Contents**
@@ -768,17 +811,42 @@ figma.connect(
 
 (Other three analogous; map each Figma variant/property to its cva variant prop.)
 
-Add `@figma/code-connect` (exact pin) as a `packages/ui` devDependency. Configure the CLI
-in the **root** `.figma/` per the directory tree (e.g. `.figma/figma.config.json` with
-`codeConnect.include = ["packages/ui/src/**/*.figma.tsx"]`).
+Add `@figma/code-connect` (exact pin — current `latest` 1.4.8) as a `packages/ui`
+devDependency. The Code Connect CLI config file MUST be named **`figma.config.json`** and
+live at the **repo ROOT** (next to `package.json`) — a `.figma/` subdirectory is **NOT
+discovered** by the CLI, and `include`/`exclude` globs resolve relative to the config file's
+location. The parser value for React Native is **`react`** (there is no `react-native`
+parser; valid values are `react | html | swift | compose`):
+
+```json
+{
+  "codeConnect": {
+    "parser": "react",
+    "include": ["packages/ui/src/**/*.figma.tsx"]
+  }
+}
+```
+
+> ⚠️ Filename collision: the **token-pipeline** config (step (e)) is named **`tokens.config.json`**
+> (NOT `figma.config.json`) specifically to avoid colliding with Code Connect's own
+> root `figma.config.json`. These are two different schemas — keep them as separate root
+> files. (Code Connect tolerates extra top-level keys, so the two could alternatively be
+> merged into one root `figma.config.json`, but this guide keeps them separate for clarity.)
 
 **Commands**
 
 ```bash
-# Validate / publish maps (needs FIGMA_TOKEN with Code Connect scope):
-pnpm dlx @figma/code-connect parse
-# publish is run during /bootstrap-design-system, not on every build.
+# Validate / publish maps. The Code Connect CLI reads FIGMA_ACCESS_TOKEN (or --token) —
+# NOT FIGMA_TOKEN. Token needs scopes code_connect:write + file_content:read:
+FIGMA_ACCESS_TOKEN=… pnpm dlx @figma/code-connect parse
+# publish (figma connect publish) is run during /bootstrap-design-system, not on every build.
 ```
+
+> ⚠️ Env-var distinction: the Code Connect CLI uses **`FIGMA_ACCESS_TOKEN`**
+> (scopes `code_connect:write` + `file_content:read`). This is DISTINCT from the REST
+> Variables pull's `FIGMA_TOKEN`/`X-Figma-Token` (step (e)), which additionally needs
+> `file_variables:read` and stays **Enterprise-only**. Using one env name for both silently
+> fails the publish step.
 
 **Why** — PLAN.md "Figma bridge" plane (2): colocated `*.figma.tsx` maps Figma component
 props → cva variants so MCP `get_design_context` returns owned `@platform/ui` components,
@@ -792,16 +860,18 @@ live in-repo as source.
 **Files**
 
 ```
-scripts/figma-tokens.mjs              # plan: source-abstracted, default Tokens Studio JSON
-figma.config.json                     # repo root: fileKey + collection -> product mode map
-packages/ui/figma/tokens.json         # committed Tokens Studio export (the default source/fixture)
+scripts/figma-tokens.mjs              # source-abstracted (Tokens Studio JSON default / REST), USES Style Dictionary v5
+tokens.config.json                    # repo root: fileKey + collection -> product mode map (NOT figma.config.json — that's Code Connect's)
+packages/ui/figma/tokens.json         # committed Tokens Studio export (DTCG format) — the default source/fixture
 ```
 
 **Contents**
 
-`figma.config.json` (root) — per the "Figma bridge" gotcha
+`tokens.config.json` (root) — per the "Figma bridge" gotcha
 (`{ fileKey, modes: { "template": <modeId>, "demo": <modeId> } }`), extended with the
-source selector:
+source selector. **This file is deliberately named `tokens.config.json`, NOT
+`figma.config.json`** — the latter is reserved for the Code Connect CLI (step (d)) and the
+two schemas would otherwise collide on one filename:
 
 ```json
 {
@@ -813,7 +883,8 @@ source selector:
     "demo": "TODO-MODE-ID-DEMO"
   },
   "outputs": {
-    "@platform/ui": "packages/ui/src/lib/theme.ts"
+    "themeTs": "packages/ui/src/lib/theme.ts",
+    "globalCss": "packages/ui/src/global.css"
   }
 }
 ```
@@ -1028,9 +1099,10 @@ packages/core/src/persist.native.ts # AsyncStorage persister
   "types": "./src/index.ts",
   "scripts": { "lint": "eslint .", "typecheck": "tsc --noEmit", "test": "jest" },
   "dependencies": {
-    "@tanstack/react-query": "5.62.0",
-    "@tanstack/react-query-persist-client": "5.62.0",
-    "@tanstack/query-async-storage-persister": "5.62.0"
+    "@tanstack/react-query": "5.101.0",
+    "@tanstack/react-query-persist-client": "5.101.0",
+    "@tanstack/query-async-storage-persister": "5.101.0",
+    "@tanstack/query-sync-storage-persister": "5.101.0"
   },
   "peerDependencies": {
     "@react-native-async-storage/async-storage": "*",
@@ -1038,6 +1110,14 @@ packages/core/src/persist.native.ts # AsyncStorage persister
   }
 }
 ```
+
+> Pins refreshed to the current TanStack Query **v5 (5.101.x)** line (June 2026) — keep all
+> four `@tanstack/*` packages in lockstep on the same 5.10x version (they version together).
+> There is no React TanStack Query v6; v5 is current. `@tanstack/query-sync-storage-persister`
+> (web persister, used by `persist.web.ts` below) belongs here too. Install
+> `@react-native-async-storage/async-storage` via `expo install` so it matches SDK 56 (current
+> line 3.1.x). Zustand (used by the app shell's theme store in step (h)) is **v5 (5.0.x)** —
+> `import { create } from "zustand"`.
 
 `packages/core/src/env.ts` (publishable-only `EXPO_PUBLIC_*`):
 
@@ -1158,12 +1238,17 @@ products/_template/app/app/(tabs)/settings.tsx
 ```
 
 > Install Expo SDK deps with `expo install` so versions match the SDK (do not hand-pin
-> Expo packages). Target **SDK 56 / RN 0.85**; fallback **SDK 55** (see Gotchas).
+> Expo packages — this includes `react-native-web`, which `expo install` resolves to the
+> version SDK 56 bundles; drop any `"*"`). Target **SDK 56 / RN 0.85**; safe-harbor fallback
+> **SDK 54** (NOT 55 — see Gotchas).
 
-`products/_template/app/app.config.ts` (Key ruling **#1/#2** — `web.output: "single"` SPA):
+`products/_template/app/app.config.ts` (Key ruling **#1/#2** — `web.output: "single"` SPA;
+EAS Update needs `updates.url` + a `runtimeVersion` policy, not just `projectId`):
 
 ```ts
 import type { ExpoConfig } from "expo/config";
+
+const PROJECT_ID = "TODO-EAS-PROJECT-ID";
 
 const config: ExpoConfig = {
   name: "template",
@@ -1172,10 +1257,29 @@ const config: ExpoConfig = {
   web: { output: "single", bundler: "metro" },
   ios: { bundleIdentifier: "com.example.template" },
   android: { package: "com.example.template" },
-  extra: { eas: { projectId: "TODO-EAS-PROJECT-ID" } },
+  // EAS Update OTA: projectId ALONE will NOT deliver OTA — `updates.url` +
+  // `runtimeVersion` are the contract between a published JS bundle and the installed
+  // native binary. `eas update:configure` writes/maintains both.
+  updates: { url: `https://u.expo.dev/${PROJECT_ID}` },
+  runtimeVersion: { policy: "appVersion" },
+  extra: { eas: { projectId: PROJECT_ID } },
 };
 export default config;
 ```
+
+> **SDK 56 OTA wiring (Key ruling, EAS Update bullet):** `extra.eas.projectId` alone is
+> insufficient — `eas update --channel …` (Phase 8) only reaches installed builds when the
+> app config carries `updates.url` (`https://u.expo.dev/<projectId>`) and a `runtimeVersion`
+> policy (`appVersion` or `fingerprint`). `eas init` writes the projectId; `eas
+> update:configure` adds/maintains `updates.url` + `runtimeVersion`. Phase 8's OTA flow
+> depends on these being present here.
+>
+> **SDK 56 fetch / Expo Router gotchas (apply across this app):** (1) SDK 56 routes
+> `globalThis.fetch` through **`expo/fetch`** (WinterCG) by default — invisible here, but it
+> affects the generated client transport + Sentry network breadcrumbs in later phases; escape
+> hatch is `EXPO_PUBLIC_USE_RN_FETCH=1`. (2) Expo Router v56 **forked React Navigation** —
+> never import `@react-navigation/*` directly; use `expo-router` / `expo-router/*` entry
+> points only (the route files below already do). (3) SDK 56 defaults to **Hermes v1**.
 
 `products/_template/app/metro.config.js` (the hoisted-linker watchFolders/nodeModulesPaths
 gotcha, Key ruling **#6**):
@@ -1377,36 +1481,58 @@ module.exports = {
 };
 ```
 
-`packages/ui/jest.setup.ts`:
+`packages/ui/jest.setup.ts` (optional — matchers auto-register; kept for explicitness):
 
 ```ts
 import "@testing-library/react-native/extend-expect";
 ```
 
-`packages/ui/src/components/ui/__tests__/button.test.tsx` (first RNTL test):
+> The `transformIgnorePatterns` allowlist above is a hand-maintained literal regex — a common
+> source of "Cannot use import statement outside a module" when a new ESM dep lands. Prefer
+> **extending** jest-expo's preset array (spread the preset's `transformIgnorePatterns` and
+> append the extra modules) rather than replacing it, and re-verify the exact module list
+> (especially `react-native-css-interop` internals) when the NativeWind v4 ↔ SDK 56 decision
+> is settled — treat it as part of that empirical spike.
+
+`packages/ui/src/components/ui/__tests__/button.test.tsx` (first RNTL test — **async**:
+RNTL v14 made `render`/`fireEvent`/`renderHook` return Promises, so each test is `async`
+and `await`s them):
 
 ```tsx
 import { render, screen, fireEvent } from "@testing-library/react-native";
 import { Button } from "../button";
 
 describe("Button", () => {
-  it("renders its label", () => {
-    render(<Button>Press me</Button>);
+  it("renders its label", async () => {
+    await render(<Button>Press me</Button>);
     expect(screen.getByText("Press me")).toBeOnTheScreen();
   });
 
-  it("fires onPress", () => {
+  it("fires onPress", async () => {
     const onPress = jest.fn();
-    render(<Button onPress={onPress}>Tap</Button>);
-    fireEvent.press(screen.getByText("Tap"));
+    await render(<Button onPress={onPress}>Tap</Button>);
+    await fireEvent.press(screen.getByText("Tap"));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 });
 ```
 
-Add devDeps to `packages/ui/package.json`: `jest`, `jest-expo`,
-`@testing-library/react-native`, `@testing-library/jest-native` (or the built-in
-`extend-expect`), `react-test-renderer` (pinned to the React version).
+> **RNTL v14 made the core API async (June 2026).** `render()` returns
+> `Promise<RenderResult>`, `fireEvent()`/`fireEvent.press()` return `Promise<void>`, and
+> `renderHook()` returns a Promise — all MUST be `await`ed (the test fn becomes `async`). A
+> synchronous example runs `screen` queries before the render Promise resolves and never
+> awaits the press. v14 requires React 19.0+ / RN 0.78+ — compatible with SDK 56's React 19.2
+> / RN 0.85. Pin `@testing-library/react-native@14.x` exact.
+
+Add devDeps to `packages/ui/package.json`: `jest`, **`jest-expo` (56.0.4 — the SDK-56-aligned
+release; install via `expo install jest-expo jest` so it matches the SDK)**, and
+`@testing-library/react-native` (14.x). **Do NOT add `@testing-library/jest-native`** — it is
+deprecated and unmaintained; its matchers (including `toBeOnTheScreen`) are **built into RNTL
+≥ 12.4 and auto-register on any RNTL import**, so the `jest.setup.ts` `extend-expect` line is
+optional (kept below for explicitness / TS types). Do **not** blindly pin `react-test-renderer`:
+React 19 deprecated it and RNTL v14 dropped it as a peer in favor of React 19's built-in test
+renderer — only add it if RNTL v14's installed peer deps explicitly require it (verify at
+install time), otherwise it just creates version-conflict noise.
 
 **Commands**
 
@@ -1425,12 +1551,22 @@ relevant for this pure-UI test).
 ## Gotchas & pitfalls
 
 - **NativeWind v4 ↔ Expo SDK 56 compat (the phase's headline risk).** Phase 2 must
-  *settle* this. Use **NativeWind v4** (v5 is pre-release — forbidden). If v4 does not yet
-  work cleanly against SDK 56 / RN 0.85 (metro transform, `react-native-css-interop`,
-  babel), the locked **fallback is Expo SDK 55**. Decide empirically: scaffold the app, run
-  `expo start` web + native, confirm `className` utilities resolve and the dark toggle
-  works; if blocked on a known SDK-56 incompat, drop the whole frontend to SDK 55 and pin
-  accordingly. Record the outcome in the commit + Open questions.
+  *settle* this. Use **NativeWind v4** (v5 is pre-release — forbidden; v5 moves to Tailwind
+  v4.1+ CSS-first config and deprecates the `vars()`/`cssInterop` surface this stack relies
+  on). NativeWind v4 is **actively maintained** (4.2.x patch line shipped through June 2026)
+  and has long supported the New Architecture, so there is no *version-level* blocker — but
+  there is **no official source confirming v4 runs cleanly on SDK 56 / RN 0.85 + New Arch +
+  Hermes v1**; the only on-record official NativeWind↔Expo pairing is **SDK 54**, and the
+  maintainer has stated releases are no longer pegged to specific SDKs. NativeWind's metro
+  transform + `react-native-css-interop` are exactly the layer most exposed to a New-Arch /
+  RN-0.85 break. Decide empirically: scaffold the app, run `expo start` web + native, confirm
+  `className` utilities resolve and the dark toggle works under New Arch / Hermes v1. **If
+  blocked on a known SDK-56 incompat, the safe-harbor fallback is Expo SDK 54, NOT 55** — SDK
+  55 is *also* New-Architecture-only (no legacy-arch escape hatch) and is *not* the
+  officially-NativeWind-validated SDK, so dropping to 55 may not fix a New-Arch/interop break;
+  SDK 54 is the last officially NativeWind-validated SDK and the last with a legacy-arch
+  option. Pin `nativewind` AND `react-native-css-interop` exact. Record the outcome in the
+  commit + Open questions.
 - **Hoisted linker + metro paths (Key ruling #6).** `.npmrc` must keep
   `node-linker=hoisted`; metro config MUST set `watchFolders=[workspaceRoot]` and
   `nodeModulesPaths=[project, workspace]`. **Never** set `disableHierarchicalLookups`.
@@ -1442,9 +1578,15 @@ relevant for this pure-UI test).
   config owns the content globs.
 - **Pin `@rn-primitives/*` exact.** Pre-1.0; a caret bump can break owned components. Same
   discipline as `@hey-api/*` (Phase 4) and `nativewind`.
-- **`react-native` → `react-native-web` alias in Storybook Vite.** Without the
-  `resolve.alias` in `.storybook/main.ts`, RN imports fail in the web-vite framework. Also
-  alias `@` → `src` to match the component imports.
+- **`react-native` → `react-native-web` alias is AUTO-HANDLED in Storybook Vite — do NOT
+  add it manually.** `@storybook/react-native-web-vite` bundles `vite-plugin-rnw`, which
+  performs the `react-native` → `react-native-web` aliasing automatically; the reference setup
+  (`dannyhw/vite-rnw-example`) has no manual `react-native` alias. The *real* requirement for
+  NativeWind utilities to render is the trio in `main.ts`/Vite (Storybook issue #32018):
+  (1) `pluginReactOptions.jsxImportSource: "nativewind"` in the framework options,
+  (2) `global.css` imported in `preview.tsx`, and (3) an actual Tailwind v3 PostCSS pipeline
+  (`postcss` + `tailwindcss@^3.4` + `autoprefixer`). Only the `@` → `src` alias is added by
+  hand (or rely on the framework's bundled `vite-tsconfig-paths`).
 - **Figma REST Variables API is Enterprise-only.** `GET /v1/files/:key/variables/local`
   requires an Enterprise plan, so the pipeline **defaults to Tokens Studio JSON** (committed,
   tier-independent, CI-runnable, reviewable diff) and only uses REST when `source:"rest"`
@@ -1515,7 +1657,7 @@ turbo run test --filter=@platform/ui                         # Button test green
 switching; `node scripts/figma-tokens.mjs` regenerates `theme.ts`; `/add-component` yields
 primitive + story + Code Connect + baseline; Expo Go on device matches; `turbo run
 export:web` + `npx serve dist` works; `turbo run test` runs the RNTL test. NativeWind
-v4↔SDK56 compat decision recorded.
+v4↔SDK56 compat decision recorded (fallback target = SDK 54).
 
 ---
 
@@ -1539,8 +1681,9 @@ the repo's git conventions (branch off the default branch first).
 ## Open questions / deferred
 
 - **⚠️ NativeWind v4 ↔ SDK 56 outcome** — must be settled during execution; if SDK 56 is
-  unworkable with NativeWind v4, fall back to **SDK 55** and record the pin. (PLAN.md
-  mandates settling this in Phase 2.)
+  unworkable with NativeWind v4, fall back to **SDK 54** (NOT 55 — 55 is also New-Arch-only
+  and not the NativeWind-validated SDK; 54 is the last officially-validated SDK with a
+  legacy-arch escape hatch) and record the pin. (PLAN.md mandates settling this in Phase 2.)
 - **⚠️ Exact version pins** for `@rn-primitives/*`, `nativewind`, `class-variance-authority`,
   Storybook/Vite, TanStack Query, `style-dictionary`, `@figma/code-connect` — freeze to
   what the CLI/`expo install` emit at execution time; PLAN.md names the packages, not the

@@ -115,6 +115,10 @@ from an earlier phase the step says so.
 - `products/_template/api/src/template_api/main.py` *(extend — register middleware + init)*
 - `packages/core/src/api.ts` *(extend — X-Request-Id injection)*
 - `packages/core/src/sentry.ts` *(extend — tag request id)*
+- `products/_template/app/app.config.ts` *(extend — add the `@sentry/react-native/expo`
+  config plugin; cross-reference Phase 2 step (h))*
+- `products/_template/app/metro.config.ts` *(extend — compose `getSentryExpoConfig` with
+  `withNativeWind`; created in Phase 2)*
 
 **Contents**
 
@@ -262,20 +266,67 @@ export function captureRequestId(requestId: string) {
   Sentry.setTag("request_id", requestId); // matches the API tag → traceable
 }
 ```
+> `Sentry.init()` alone is NOT enough for production source maps / native symbolication — it
+> ships the JS-only runtime half. For Expo you ALSO need the build-time half: the config
+> plugin (below) + Metro wiring (below). Pin `@sentry/react-native` to a release that lists
+> **Expo SDK 56 / RN 0.85** support.
+
+`app/app.config.ts` (extend — add the Expo config plugin; cross-reference the Phase 2
+`app.config.ts` that already sets `scheme`, bundle ids, `extra.eas.projectId`, and the
+`updates.url` + `runtimeVersion` OTA policy):
+```ts
+// inside the Expo config `plugins` array:
+plugins: [
+  // ...existing plugins (expo-router, etc.)
+  [
+    "@sentry/react-native/expo",
+    {
+      // organization/project + auth token enable source-map upload at build time.
+      // SENTRY_AUTH_TOKEN is a BUILD env var (EAS secret) — never committed.
+      organization: "example",      // PLACEHOLDER org slug
+      project: "example-template",  // PLACEHOLDER Sentry project slug
+    },
+  ],
+],
+```
+
+`app/metro.config.ts` (extend — compose Sentry's Metro config with NativeWind; created in
+Phase 2 with `getDefaultConfig` + `withNativeWind`):
+```ts
+const { getSentryExpoConfig } = require("@sentry/react-native/metro");
+const { withNativeWind } = require("nativewind/metro");
+
+// Sentry FIRST (replaces getDefaultConfig), THEN wrap with NativeWind.
+const config = getSentryExpoConfig(__dirname);
+config.watchFolders = [workspaceRoot];           // ../../.. — preserve Phase 2 monorepo wiring
+config.resolver.nodeModulesPaths = [
+  projectRoot + "/node_modules",
+  workspaceRoot + "/node_modules",
+];
+module.exports = withNativeWind(config, { input: "./global.css" });
+```
+> ⚠️ REVIEW: Phase 2's `metro.config.js` uses `getDefaultConfig`; here it is swapped for
+> `getSentryExpoConfig(__dirname)` (which internally calls `getDefaultConfig` and adds the
+> Sentry serializer). Keep the existing `watchFolders`/`nodeModulesPaths` monorepo wiring.
 
 **Commands**
 ```bash
 cd products/_template/api && uv add structlog "sentry-sdk[fastapi]" && cd -
 pnpm --filter @platform/core add @sentry/react-native
+# the Expo config plugin + Metro helper ship inside the same package — no extra install.
 turbo run typecheck --filter=*template-api --filter=@platform/core
 ```
 
 **Why** — PLAN.md Observability: "Sentry + structlog JSON logs + request_id middleware; the
 API-client wrapper sends a generated X-Request-Id per request; Sentry events tagged with it
 on both sides → client→API→logs traceability." `@sentry/react-native` is the locked SDK
-(`sentry-expo` is deprecated). The request-id middleware must be outermost so even error
-responses carry the id; structlog `merge_contextvars` is what threads the id into every log
-line emitted during the request.
+(`sentry-expo` is deprecated; pin a release listing Expo SDK 56 / RN 0.85 support). On Expo,
+`Sentry.init()` is only the runtime half — production source maps and native symbolication
+need the `@sentry/react-native/expo` **config plugin** in `app.config.ts` PLUS `getSentryExpoConfig`
+**Metro** wiring composed with `withNativeWind` (and `SENTRY_AUTH_TOKEN` as an EAS build secret,
+never committed). The request-id middleware must be outermost so even error responses carry
+the id; structlog `merge_contextvars` is what threads the id into every log line emitted during
+the request.
 
 ---
 
@@ -576,7 +627,10 @@ STALE_AFTER = timedelta(days=90)
 def prune_push_tokens() -> int:
     cutoff = datetime.now(timezone.utc) - STALE_AFTER
     with Session(engine) as session:
-        result = session.exec(delete(PushToken).where(PushToken.updated_at < cutoff))
+        # SQLModel's session.exec() only types select(); delete()/update() MUST go through
+        # SQLAlchemy's session.execute() — exec(delete(...)) fails pyright strict and lacks
+        # .rowcount. execute(delete(...)) returns a Result whose .rowcount is valid.
+        result = session.execute(delete(PushToken).where(PushToken.updated_at < cutoff))
         session.commit()
         count = result.rowcount or 0
     log.info("pruned_push_tokens", count=count)
@@ -797,10 +851,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0          # turbo --affected needs history for the base diff
-      - uses: jdx/mise-action@v2  # installs Node 22 / pnpm 10 / Python 3.13 / uv from mise.toml
+      - uses: jdx/mise-action@v4  # installs Node 24 / pnpm 11 / Python 3.13 / uv from mise.toml
+                                   # v4 = Node-24 action runtime (Node 20 is EOL on GH runners); commit a mise.lock for locked installs
       - run: pnpm install --frozen-lockfile
       - name: uv sync (affected APIs)
         run: |
@@ -808,6 +863,11 @@ jobs:
             uv sync --frozen --project "$api"
           done
       - name: Lint / typecheck / test / build / openapi (affected only)
+        env:
+          # Explicit base/head so `--affected` scopes correctly regardless of squash-merge
+          # histories: PR base sha on pull_request, the pushed-from sha on push to main.
+          TURBO_SCM_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TURBO_SCM_HEAD: ${{ github.sha }}
         run: pnpm turbo run lint typecheck test build openapi --affected
       - name: Typegen drift check
         run: |
@@ -822,11 +882,12 @@ jobs:
           --health-cmd "pg_isready" --health-interval 10s
           --health-timeout 5s --health-retries 5
 ```
-> ⚠️ OPEN / TO CONFIRM: `--affected` base ref. On `pull_request` Turbo diffs against the PR
-> base; on `push` to `main` it uses the previous commit. PLAN.md says affected-only; if the
-> default base detection misbehaves in CI, pass `--affected` with an explicit
-> `TURBO_SCM_BASE`. The `uv sync` loop is the documented "uv sync affected apis" — a stricter
-> affected filter can be layered later.
+> RESOLVED (affected base ref): with `fetch-depth: 0`, Turborepo 2.x auto-detects the base
+> (PR base ref on `pull_request`, previous commit on `push` to `main`) — usually correct. To
+> be robust against squash-merge histories and shallow edge cases, the step above sets
+> `TURBO_SCM_BASE`/`TURBO_SCM_HEAD` explicitly (`github.event.pull_request.base.sha` on PRs,
+> `github.event.before` on push). The `uv sync` loop is the documented "uv sync affected
+> apis" — a coarse all-APIs sync; a stricter affected filter can be layered later.
 
 **Commands** — `git push origin <branch>` → Actions runs it. Locally:
 `pnpm turbo run lint typecheck test build openapi --affected`.
@@ -853,8 +914,8 @@ jobs:
     outputs:
       products: ${{ steps.filter.outputs.changes }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -868,7 +929,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(needs.changes.outputs.products) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Deploy (staging on main, production on tag)
         working-directory: products/${{ matrix.product == 'template' && '_template' || matrix.product }}/api
@@ -911,22 +972,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
       - run: pnpm install --frozen-lockfile     # committed .npmrc (node-linker=hoisted) honoured
       - uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}        # PLACEHOLDER secret
+      - name: Resolve product token (from tag on tag-push)
+        id: tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "product=${GITHUB_REF_NAME%%-app-v*}" >> "$GITHUB_OUTPUT"
       - name: EAS build
-        working-directory: products/${{ github.event.inputs.product || 'PARSE-FROM-TAG' }}/app
+        # dispatch input wins; on a tag push, parse `<product>` from the `<product>-app-v*` tag.
+        # `template` maps to the on-disk `_template` dir (the literal product token vs path).
+        working-directory: products/${{ (github.event.inputs.product || steps.tag.outputs.product) == 'template' && '_template' || (github.event.inputs.product || steps.tag.outputs.product) }}/app
         run: eas build --non-interactive --profile "${{ github.event.inputs.profile || 'production' }}"
 ```
 > **eas-cli workspace-detection workaround (gotcha):** the build relies on the committed
 > `.npmrc` (`node-linker=hoisted`) AND a `"packageManager": "pnpm@10.x"` field in the **root**
 > `package.json` — without both, `eas build` misdetects the package manager in a pnpm
-> workspace. ⚠️ OPEN / TO CONFIRM: parsing `<product>` from the `*-app-v*` tag needs a small
-> shell step (e.g. `${GITHUB_REF_NAME%%-app-v*}`); shown as `PARSE-FROM-TAG` placeholder.
+> workspace. RESOLVED (tag→product parse): the `tag` step derives `<product>` from the
+> `<product>-app-v*` tag via bash parameter expansion `${GITHUB_REF_NAME%%-app-v*}` and
+> exposes it as `steps.tag.outputs.product`; the `working-directory` then maps the literal
+> `template` token to the on-disk `_template` dir (same expression the matrix workflows use).
 
 **Commands** — manual: Actions → "EAS Build" → run with `product`+`profile`. Store build:
 `git tag template-app-v1.0.0 && git push origin template-app-v1.0.0`.
@@ -952,8 +1021,8 @@ jobs:
     outputs:
       products: ${{ steps.filter.outputs.changes }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -967,8 +1036,8 @@ jobs:
       matrix:
         product: ${{ fromJSON(needs.changes.outputs.products) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
       - run: pnpm install --frozen-lockfile
       - uses: expo/expo-github-action@v8
         with: { eas-version: latest, token: ${{ secrets.EXPO_TOKEN }} }
@@ -981,6 +1050,12 @@ jobs:
             eas update --channel staging --non-interactive --auto
           fi
 ```
+> **OTA delivery prerequisite (cross-reference Phase 2 `app.config.ts`):** `eas update
+> --channel` only reaches INSTALLED builds if `app.config.ts` sets `updates.url`
+> (`https://u.expo.dev/<projectId>`) AND a `runtimeVersion` policy (e.g. `{ policy:
+> "appVersion" }` or `"fingerprint"`). `extra.eas.projectId` alone does NOT deliver OTA —
+> without `updates.url` + a matching `runtimeVersion`, this workflow publishes an update that
+> no installed build ever fetches. `eas update:configure` populates both.
 
 **Commands** — staging OTA is automatic on merge to `main`. Production OTA:
 `git tag template-ota-v1.0.1 && git push origin template-ota-v1.0.1`.
@@ -1012,8 +1087,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - name: Web E2E (signup → login → CRUD → realtime)
@@ -1021,8 +1096,8 @@ jobs:
   visual-regression:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - name: Build Storybook
@@ -1056,8 +1131,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
       - run: pnpm install --frozen-lockfile
       - name: Build the web bundle the desktop wraps
         run: pnpm turbo run export:web --filter=*-app
@@ -1083,8 +1158,14 @@ tag must match `desktop/package.json` version." Each product's desktop publishes
 "latest release of the repo" collision).
 
 > **Note — web has NO workflow.** Vercel's git integration deploys each product's web app on
-> push; `npx turbo-ignore` is the per-product Vercel "ignored build step" so only touched
-> products rebuild. There is deliberately no `web-deploy.yml`.
+> push. There is deliberately no `web-deploy.yml`. For skipping unaffected monorepo builds,
+> **`turbo-ignore` is now OPTIONAL**: Vercel ships a built-in **"Automatically skip
+> unnecessary deployments in monorepos"** project setting (Turborepo-powered) that skips
+> unchanged projects with NO manual ignored-build-step config — prefer enabling that. The
+> per-product `npx turbo-ignore` "ignored build step" remains a valid manual alternative; if
+> still invoked bare, pass **`--fallback=HEAD^`** (`npx turbo-ignore --fallback=HEAD^`) to
+> avoid the new-branch "always deploys" gotcha (turbo-ignore otherwise compares against the
+> last successful deployment on the branch, which doesn't exist on a branch's first commit).
 
 ---
 
@@ -1258,9 +1339,11 @@ product-scoped and load from the session's project root.
   misdetect the package manager unless BOTH the committed `.npmrc` (`node-linker=hoisted`)
   and a `"packageManager": "pnpm@10.x"` field in the **root** `package.json` are present.
   Both must ship.
-- **Web has NO workflow.** Do not add a `web-deploy.yml`. Vercel git integration + per-product
-  `npx turbo-ignore` (Vercel "ignored build step") handle web. Adding a workflow would
-  double-deploy.
+- **Web has NO workflow.** Do not add a `web-deploy.yml`. Vercel git integration handles web;
+  adding a workflow would double-deploy. Skip-unaffected is now Vercel's built-in
+  "Automatically skip unnecessary deployments in monorepos" setting (preferred) — `npx
+  turbo-ignore` as the manual "ignored build step" is OPTIONAL now, and if invoked bare must
+  pass `--fallback=HEAD^` to avoid the new-branch always-deploy gotcha.
 - **macOS desktop signing gating.** `electron-builder --publish always` only signs/notarizes
   macOS once certs exist. Until then, either drop `macos-latest` from the matrix or build
   unsigned (no `--publish` of the mac artifact). Auto-update on macOS requires
