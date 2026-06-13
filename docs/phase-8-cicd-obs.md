@@ -1369,8 +1369,8 @@ product-scoped and load from the session's project root.
   PLAN.md locks `@sentry/react-native`. Using the wrong package is a silent footgun.
 - **eas-cli workspace detection workaround.** In a pnpm workspace, `eas build`/`eas update`
   misdetect the package manager unless BOTH the committed hoisted node-linker
-  (`nodeLinker: hoisted` in `pnpm-workspace.yaml` — pnpm 11's home for it; `.npmrc`
-  `node-linker=hoisted` still honoured) and a `"packageManager": "pnpm@11.x"` field in the
+  (`nodeLinker: hoisted` in `pnpm-workspace.yaml` — pnpm 11's home for it; the old `.npmrc`
+  `node-linker` key is silently ignored on pnpm 11) and a `"packageManager": "pnpm@11.x"` field in the
   **root** `package.json` are present.
   Both must ship.
 - **Web has NO workflow.** Do not add a `web-deploy.yml`. Vercel git integration handles web;

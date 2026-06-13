@@ -1618,8 +1618,9 @@ relevant for this pure-UI test).
   SDK 54 is the last officially NativeWind-validated SDK and the last with a legacy-arch
   option. Pin `nativewind` AND `react-native-css-interop` exact. Record the outcome in the
   commit + Open questions.
-- **Hoisted linker + metro paths (Key ruling #6).** `.npmrc` must keep
-  `node-linker=hoisted`; metro config MUST set `watchFolders=[workspaceRoot]` and
+- **Hoisted linker + metro paths (Key ruling #6).** `pnpm-workspace.yaml` must keep
+  `nodeLinker: hoisted` (pnpm 11's home for it; the old `.npmrc` `node-linker` key is
+  silently ignored on pnpm 11); metro config MUST set `watchFolders=[workspaceRoot]` and
   `nodeModulesPaths=[project, workspace]`. **Never** set `disableHierarchicalLookups`.
   Symptom if wrong: metro can't resolve `@platform/ui` / hoisted deps.
 - **Cross-package tailwind content globs.** Use

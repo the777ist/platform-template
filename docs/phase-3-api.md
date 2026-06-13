@@ -51,8 +51,8 @@ Python-deps notes in "Config essentials & gotchas"; and the API unit + integrati
 ## Prerequisites
 
 - **Phase 1 complete** — root pnpm workspace, Turborepo 2.9, `tsconfig.base.json`,
-  `.npmrc` with `node-linker=hoisted`, `lefthook.yml`, and `mise.toml` pinning Node 22 /
-  pnpm 10 / **Python 3.13** / **uv**. `pnpm-workspace.yaml` already globs
+  `pnpm-workspace.yaml` with `nodeLinker: hoisted`, `lefthook.yml`, and `mise.toml` pinning
+  Node 24 / pnpm 11 / **Python 3.13** / **uv**. `pnpm-workspace.yaml` already globs
   `products/*/{app,desktop,api,api-client}` so the api workspace is picked up.
 - **uv + Python 3.13** available via `mise install` (the api is a self-contained uv project
   per the Package management model — own `pyproject.toml`, own `uv.lock`, own `.venv`).
