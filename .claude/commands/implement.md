@@ -33,9 +33,9 @@ instructions**:
 3. **`docs/research/*.md`** — only the reports the guide cites, when you need the "why" or a
    source URL behind a decision.
 4. Any **`CLAUDE.md`** files in scope (they load hierarchically).
-5. **`docs/OPEN-ITEMS.md`** — the consolidated index of every `⚠️ REVIEW` / `TO CONFIRM`
-   marker and fill-in token across the guides. Use it to pre-flight which open items your
-   target phase will hit; the authoritative wording still lives at each `file:line` it points to.
+
+   Before building, scan your target guide for `⚠️ REVIEW` / `TO CONFIRM` markers and its
+   `## Open questions / deferred` section to pre-flight which items you'll have to resolve.
 
 ## Hard rules — do not violate
 
