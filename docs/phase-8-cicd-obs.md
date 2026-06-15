@@ -1214,7 +1214,7 @@ tag must match `desktop/package.json` version." Each product's desktop publishes
 
 **Contents** — root `CLAUDE.md` is the monorepo map + conventions + gotchas:
 ```markdown
-# CLAUDE.md — platform-template monorepo
+# CLAUDE.md — platform monorepo
 
 ## Map
 packages/{config,ui,core}; products/{_template,demo}/{app,desktop,api,api-client}.

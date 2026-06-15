@@ -175,7 +175,7 @@ Under **pnpm 11** this same file is now also where the pnpm *settings* live: `no
 
 ```json
 {
-  "name": "platform-template",
+  "name": "platform",
   "private": true,
   "packageManager": "pnpm@11.6.0",
   "engines": {
@@ -215,7 +215,7 @@ pnpm install            # installs devDeps, links @platform/config, runs `prepar
 - `scripts: new-product, bootstrap` and `devDeps: turbo, prettier, lefthook` come verbatim from the Directory-tree annotation for `package.json`. `bootstrap` = "mise → install → supabase start" (PLAN "Operational defaults"); the `supabase:start` per-package script is `--if-present` so it's a no-op until products exist.
 - `@platform/config` as a `workspace:*` devDep makes the shared ESLint/Prettier/tsconfig presets resolvable from the root.
 
-⚠️ **OPEN / TO CONFIRM:** Exact dep versions. PLAN.md pins **Turborepo 2.9** (so `turbo` is set to `2.9.0` — confirm the exact 2.9.x patch at install time; the 2.9.x line is live as of June 2026). Prettier/lefthook/typescript patch versions are not pinned in PLAN; the `^` ranges above are reasonable defaults — replace with whatever the lockfile resolves and pin if stricter reproducibility is wanted. `"name": "platform-template"` stays `platform-template` (matches the repo template), but note PLAN's naming convention warns the **monorepo name never drives app/infra ids** (those come from product names) — so this name is cosmetic only.
+⚠️ **OPEN / TO CONFIRM:** Exact dep versions. PLAN.md pins **Turborepo 2.9** (so `turbo` is set to `2.9.0` — confirm the exact 2.9.x patch at install time; the 2.9.x line is live as of June 2026). Prettier/lefthook/typescript patch versions are not pinned in PLAN; the `^` ranges above are reasonable defaults — replace with whatever the lockfile resolves and pin if stricter reproducibility is wanted. `"name": "platform"` is the root monorepo name; note PLAN's naming convention warns the **monorepo name never drives app/infra ids** (those come from product names) — so this name is cosmetic only, independent of the git repo name.
 
 ---
 

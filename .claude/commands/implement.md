@@ -52,7 +52,7 @@ instructions**:
   in the repo, say so and stop (or note it explicitly if trivially satisfiable) — do not
   half-build on a missing base.
 - **No `creator-clubs` string anywhere.** Repo-relative paths only. Root package name is
-  `platform-template`; org placeholder is `example`; the product token is `template`.
+  `platform`; org placeholder is `example`; the product token is `template`.
 - **Git:** develop on the designated feature branch, make descriptive commits, push with
   `git push -u origin <branch>`. Do **NOT** open a pull request unless explicitly asked.
 

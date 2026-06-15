@@ -257,7 +257,7 @@ open. These outputs are committed (raster PNGs) so CI/build never needs the rast
 `packageManager` field intact):
 ```json
 {
-  "name": "platform-template",
+  "name": "platform",
   "private": true,
   "packageManager": "pnpm@11.6.0",
   "scripts": {
@@ -277,7 +277,7 @@ pnpm bootstrap                 # -> node scripts/bootstrap.mjs
 PLAN.md directory tree: root `package.json # scripts: new-product, bootstrap`. `pnpm
 new-product <name>` is the documented generator entry point (Multi-product bullet); `pnpm
 bootstrap` is the one-command onboarding (`mise → install → supabase start`, Operational
-defaults). Root name is `platform-template` and the scope is `@platform/*` — these are
+defaults). Root name is `platform` and the scope is `@platform/*` — these are
 **not** product tokens and are never rewritten by the generator (naming derives from the
 *product*, not the repo). The `packageManager` field is also the eas-cli workspace-detection
 workaround (Phase 8 note) — leave it.
@@ -677,7 +677,7 @@ brand assets — with **zero** `template` tokens remaining (Verify #5).
   typechecked, and built in CI and never rot (Key ruling #7). Do **not** rename it to
   `template/` (that's a real product name) or exclude it from the globs.
 
-- **Naming derives from the product name, never the repo name.** `platform-template`
+- **Naming derives from the product name, never the repo name.** `platform`
   (root) and `@platform/*` (scope) are **not** product tokens; the generator must never
   rewrite them. Only the `template`/`Template`/`template_api` *product* token is rewritten.
   This is what keeps the scaffold portable (Naming conventions header).
