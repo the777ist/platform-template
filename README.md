@@ -138,6 +138,27 @@ pnpm 11 · Node 24 · Python 3.13 · **Expo SDK 56** (RN 0.85) · **NativeWind v
 
 ---
 
+## Post-setup cleanup (once the template is built)
+
+The Phases 1–8 material is **build-time scaffolding** — nothing in daily development references
+it. The everyday loop runs entirely off the `CLAUDE.md` files, the slash commands, and
+`scripts/`. Once all phases are built and verified, these are safe to delete:
+
+- **`.claude/commands/implement.md`** — the `/implement` command (you don't re-implement phases).
+- **`docs/phase-*.md`** — the per-phase build guides (their durable conventions now live in the
+  generated `CLAUDE.md` files).
+- **`docs/research/`** — *optional*: the stack-choice fact-check + source URLs. Keep it only if
+  you want the audit trail.
+
+**Keep:** `PHILOSOPHY.md` (the architecture/decision record), the generated `CLAUDE.md` files,
+the other `.claude/commands/*`, `packages/ui/FIGMA.md`, and `scripts/`.
+
+If you delete `docs/`, also trim the two callouts in `PHILOSOPHY.md` that link into it (the
+phase-guide list and the `docs/research/` provenance line) so no links dangle. Daily
+development is unaffected — it never touches any of the deleted files.
+
+---
+
 ## Where to read more
 
 | Doc | What it is |
