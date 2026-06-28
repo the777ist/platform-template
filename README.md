@@ -26,10 +26,6 @@ step-by-step build instructions live in **[`docs/`](docs/)** (`phase-1` … `pha
 
 ## Tech stack
 
-> Versions are **locked** — treat them as fixed and don't upgrade without a deliberate
-> decision (rationale + per-choice sources in [`PHILOSOPHY.md`](PHILOSOPHY.md) and
-> [`docs/research/`](docs/research/)).
-
 **Frontend** — one React Native codebase → iOS · Android · web · desktop
 
 | Layer | Choice |
@@ -52,12 +48,10 @@ step-by-step build instructions live in **[`docs/`](docs/)** (`phase-1` … `pha
 | Data / auth | **Supabase** — Postgres · Auth (JWT/JWKS) · Realtime · Storage |
 | IDs / limits | UUIDv7 (`uuid-utils`) · slowapi rate limiting |
 
-**Contracts, design & testing**
+**Design & testing**
 
 | Concern | Choice |
 |---|---|
-| API contract | OpenAPI → **`@hey-api/openapi-ts`** typed client + TanStack hooks (committed, never hand-edited) |
-| Errors | RFC 9457 problem+json |
 | Design system | **Storybook 9** (`react-native-web-vite`) · Figma Code Connect + Variables · Style Dictionary v5 |
 | JS tests | **jest-expo + React Native Testing Library** |
 | API tests | **pytest** (real Postgres) |
