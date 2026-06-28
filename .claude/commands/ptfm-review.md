@@ -8,7 +8,7 @@ Args: $ARGUMENTS
 Expected shape: `<product> <TICKET-ID> [slug-or-title] [primary user instruction]`
 
 - **`<product>`** — first token: the product directory under `products/` (e.g. `blog`). **Required.** If absent, infer it from the cwd when the session is inside `products/<name>/...`; otherwise STOP and ASK. Validate that `products/<product>/` exists; if it doesn't, STOP and ASK — do NOT guess. EVERYTHING this command does — the diff enumeration, the codebase walk, every glob, every save path — is scoped to `products/<product>/`.
-- **`<TICKET-ID>`** — second token (e.g. `CRO-145`). If not passed, the resolve block below auto-infers from the current branch; if it can't, that's fine for a review — proceed; the ticket is only used to locate plan/impl docs and name the report.
+- **`<TICKET-ID>`** — second token (e.g. `ABC-145`). If not passed, the resolve block below auto-infers from the current branch; if it can't, that's fine for a review — proceed; the ticket is only used to locate plan/impl docs and name the report.
 - **`[slug-or-title]`** — optional next token (kebab-case slug or quoted title). Overrides the auto-inferred slug. If absent, the resolve block globs `products/<product>/docs/plans/` and `products/<product>/docs/implementation/` to recover it.
 - **`[primary user instruction]`** — anything after the slug (or after the ticket ID if no slug-shaped token follows). Freeform guidance for THIS specific invocation — scope the review ("security only", "just the realtime surface", "review PR #123", "review the last 3 commits"), set the base branch, raise the bar, etc. **It does NOT override the absolute rules below** — if it conflicts with a rule, prefer the rule and surface the conflict to the user.
 
@@ -19,7 +19,7 @@ We need to do a deep **code review AND security review** of the changes on this 
 **Resolve `<product>`, `<TICKET-ID>`, `<slug>`, and the review surface BEFORE doing anything else.**
 
 1. **`<product>`** — first token if provided; else infer from cwd (`products/<name>/...`); else STOP and ASK. Confirm `products/<product>/` exists.
-2. **`<TICKET-ID>`** — if a ticket-shaped token was provided in `$ARGUMENTS` (after `<product>`), use it. Otherwise run `git branch --show-current` and extract the `<TEAM>-<NUMBER>` portion (e.g. `CRO-145` from `feature/CRO-145-d2c-bulk-edit`). If neither yields a ticket, that's fine for a review — proceed; the ticket is only used to locate plan/impl docs and name the report.
+2. **`<TICKET-ID>`** — if a ticket-shaped token was provided in `$ARGUMENTS` (after `<product>`), use it. Otherwise run `git branch --show-current` and extract the `<TEAM>-<NUMBER>` portion (e.g. `ABC-145` from `feature/ABC-145-d2c-bulk-edit`). If neither yields a ticket, that's fine for a review — proceed; the ticket is only used to locate plan/impl docs and name the report.
 3. **`<slug>`** — if a slug-shaped token was provided, use it. Otherwise `Glob products/<product>/docs/plans/<TICKET-ID>*_plan.md` and `products/<product>/docs/implementation/<TICKET-ID>*_implementation.md` to recover the canonical slug; else derive from the branch name.
 4. **Review surface** — default is the diff between the current branch and the base branch (`main` for this repo (trunk-based per PHILOSOPHY.md) — confirm via `git remote show origin` if unsure), scoped to `products/<product>/`, PLUS uncommitted working-tree changes. The user instruction may override (a PR number, a commit range, a path filter, "security only"). If the diff is empty, STOP and ask what to review.
 

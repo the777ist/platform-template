@@ -8,7 +8,7 @@ Args: $ARGUMENTS
 Expected shape: `<product> <TICKET-ID> [slug-or-title] [primary user instruction]`
 
 - **`<product>`** — first token. The product directory under `products/` (e.g. `blog`). **Required.** If not passed, infer it from the cwd when the session is inside `products/<name>/...`; otherwise STOP and ASK. Validate that `products/<product>/` exists; if it does not, STOP and ASK. EVERYTHING this command does — the codebase walk, the globs, the save paths — is scoped to `products/<product>/`.
-- **`<TICKET-ID>`** — second token (e.g. `CRO-145`). **Required.** If not passed, the resolve block below auto-infers from the current branch; if it can't, STOP and ask.
+- **`<TICKET-ID>`** — second token (e.g. `ABC-145`). **Required.** If not passed, the resolve block below auto-infers from the current branch; if it can't, STOP and ask.
 - **`[slug-or-title]`** — optional third token (kebab-case slug or quoted title). Overrides the auto-inferred slug. If absent, the resolve block derives the slug from the Linear ticket title (the common case for `/ptfm-architect`, which runs upstream of plan / implementation), or globs `products/<product>/docs/architecture/<TICKET-ID>*_architecture.md` for a mid-cycle re-architecture.
 - **`[primary user instruction]`** — anything after the slug (or after the ticket ID if no slug-shaped token follows). Freeform guidance for THIS specific invocation — adjust scope, focus, or emphasis as instructed. **It does NOT override the absolute rules below** — if it conflicts with a rule, prefer the rule and surface the conflict to the user.
 
@@ -19,7 +19,7 @@ We need to architect the full feature for Linear ticket `<TICKET-ID>` (scoped to
 **Resolve `<product>`, `<TICKET-ID>`, and `<slug>` BEFORE doing anything else.**
 
 1. **`<product>`** — if a first token was provided in `$ARGUMENTS`, use it. Otherwise, if the session is running inside `products/<name>/...`, infer `<name>`. If neither yields a product, STOP and ASK. Validate `products/<product>/` exists on disk; if not, STOP and ASK — do NOT scaffold a product here.
-2. **`<TICKET-ID>`** — if a ticket-shaped token was provided in `$ARGUMENTS`, use it. Otherwise run `git branch --show-current` and extract the `<TEAM>-<NUMBER>` portion (e.g. `CRO-145` from `feature/CRO-145-comment-threads`). If neither yields a ticket, STOP and ASK — do NOT guess.
+2. **`<TICKET-ID>`** — if a ticket-shaped token was provided in `$ARGUMENTS`, use it. Otherwise run `git branch --show-current` and extract the `<TEAM>-<NUMBER>` portion (e.g. `ABC-145` from `feature/ABC-145-comment-threads`). If neither yields a ticket, STOP and ASK — do NOT guess.
 3. **`<slug>`** — if a slug-shaped token was provided, use it. Otherwise derive the slug from the Linear ticket title (kebab-case, ~5–8 words, drop filler words) — this is the common case for `/ptfm-architect` since it runs upstream of plan / implementation. The only fallback glob is `products/<product>/docs/architecture/<TICKET-ID>*_architecture.md` for a mid-cycle re-architecture against an existing architecture doc. Do NOT glob `docs/plans/` or `docs/implementation/` — those artifacts don't exist yet at architect time.
 
 Reference docs (read these first, in full, in this order):
@@ -50,7 +50,7 @@ Follow load-bearing external links — Notion docs via Notion MCP, Figma frames 
 
 If you cannot find a Notion link on the ticket but the ticket reads like it's referencing one (e.g. "as per the brief", "see the doc", "per the spec"), STOP and ASK the user for the Notion URL before proceeding — do NOT architect against a missing brief.
 
-**Also quickly check for an upstream product brief at `products/<product>/docs/product/<TICKET-ID>*_product.md` or `products/<product>/docs/product/*_product.md`** (the user may name it explicitly in the primary user instruction, e.g. `"product brief CRO-160"` or a direct path). If one exists — written by `/ptfm-product` — READ IT IN FULL. The product brief defines WHAT and WHY and FOR WHOM; it is binding context for this architecture's scope IN / scope OUT / success metrics / target user. The architect still decides HOW (system layers, phasing, patterns), but cannot silently re-scope the product. If the architecture would have to deviate from the brief's scope to be technically sensible, STOP and surface to the user — the brief amendment happens via `/ptfm-product`, not silently here. **If no product brief exists, that's the common case for smaller features — proceed with architecture directly. Do NOT force a `/ptfm-product` pass where one isn't warranted.**
+**Also quickly check for an upstream product brief at `products/<product>/docs/product/<TICKET-ID>*_product.md` or `products/<product>/docs/product/*_product.md`** (the user may name it explicitly in the primary user instruction, e.g. `"product brief ABC-160"` or a direct path). If one exists — written by `/ptfm-product` — READ IT IN FULL. The product brief defines WHAT and WHY and FOR WHOM; it is binding context for this architecture's scope IN / scope OUT / success metrics / target user. The architect still decides HOW (system layers, phasing, patterns), but cannot silently re-scope the product. If the architecture would have to deviate from the brief's scope to be technically sensible, STOP and surface to the user — the brief amendment happens via `/ptfm-product`, not silently here. **If no product brief exists, that's the common case for smaller features — proceed with architecture directly. Do NOT force a `/ptfm-product` pass where one isn't warranted.**
 
 If the ticket is sparse and strategic direction is ambiguous EVEN after reading the Notion brief / product brief, ASK the user for missing context before proceeding rather than inventing requirements.
 
@@ -156,7 +156,7 @@ Use the Linear MCP (`mcp__plugin_linear_linear__save_issue` or `mcp__claude_ai_L
 
    **Structure is the readability tool, not brevity.** A long ticket with good headings, bullets, and diagrams is far more useful than a short ticket that hides important detail. Don't pad; don't strip either. Write what an engineer needs to actually build the phase.
 
-6. **Capture** the created issue's ticket ID (e.g. `CRO-161`), identifier slug, and URL from the MCP response. You'll need these for the architecture doc's `## Handoff brief to /ptfm-plan` section AND for the final report.
+6. **Capture** the created issue's ticket ID (e.g. `ABC-161`), identifier slug, and URL from the MCP response. You'll need these for the architecture doc's `## Handoff brief to /ptfm-plan` section AND for the final report.
 
 **If a Linear ticket creation fails** (permissions, missing required field, etc.), STOP and surface to the user — do NOT proceed to save the architecture doc with broken / placeholder ticket IDs. Either fix the permission and retry, or ask the user to create the sub-issues manually and paste the IDs back to you.
 
