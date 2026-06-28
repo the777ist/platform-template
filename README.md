@@ -104,9 +104,18 @@ verification gate. With Claude Code, the `/implement` command drives a phase end
 (Or build manually straight from `docs/phase-N-*.md`.) After Phase 7 you have a working
 `products/_template` starter — auth screens, an API-backed list (items CRUD), settings with a
 theme/dark toggle, and tab navigation. **Phase 9** is the graduation step: once 1–8 are built
-and verified, it deletes the build scaffolding (the `/implement` command + `docs/phase-*.md`)
-and rewrites these build-oriented docs into their built-state form — leaving only the runtime
-surface (`CLAUDE.md`, `scripts/`, the slash commands, `PHILOSOPHY.md`).
+and verified, it deletes the build scaffolding (the `/implement` + `/update` commands +
+`docs/phase-*.md`) and rewrites these build-oriented docs into their built-state form — leaving
+only the runtime surface (`CLAUDE.md`, `scripts/`, the slash commands, `PHILOSOPHY.md`).
+
+**Keeping the template current.** Before graduating (Phase 9), `/update` refreshes the *entire*
+template to the latest: it re-runs **deep web research** for every surface against current
+official docs, then folds the findings into the research reports, `PHILOSOPHY.md`, every phase
+guide, the `ptfm-*` commands, and this README — bumping versions and adapting to changed
+APIs/deprecations, every change cited to a live source. Run `/update` (all surfaces) or
+`/update <surface>` (e.g. `/update expo`). It is **research-gated** — if live web research
+isn't available, it stops rather than update from stale knowledge. (Like `/implement`, it's
+build-time tooling and is removed at Phase 9.)
 
 ---
 
