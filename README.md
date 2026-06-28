@@ -224,11 +224,10 @@ that constructs the monorepo's eight phases.)
 `/update` keeps the template current: it re-runs **deep web research** for every surface
 against current official docs, then folds the findings into the research reports,
 `PHILOSOPHY.md`, the phase guides, the `ptfm-*` commands, and this README — bumping versions and
-adapting to changed APIs / deprecations, every change cited to a live source. It maps to
-phases **exactly like `/implement`**: `/update <N>` refreshes the same phase `/implement <N>`
-builds (`/update 3` = the API phase); `/update` with no args refreshes every phase, 1 → 9. It
-is **research-gated**: if live web research isn't available it stops rather than update from
-stale knowledge.
+adapting to changed APIs / deprecations, every change cited to a live source. Run `/update <N>` to update a given phase of the template
+(phase numbers map to the same phase as `/implement <N>`), or `/update` without args to update
+the entire stack. It is **research-gated**: if live web research isn't available it stops rather
+than update from stale knowledge.
 
 ---
 
