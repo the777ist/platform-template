@@ -6,7 +6,7 @@
 > destructive and recoverable only via git history; guard hard and confirm before running.
 
 **Goal:** Once Phases 1–8 are built and verified, remove the build-time scaffolding (the
-`/implement` command and the per-phase guides) and rewrite the build-oriented docs into their
+`/implement` + `/update` commands and the per-phase guides) and rewrite the build-oriented docs into their
 built-state form, so the finished repo carries only its runtime surface — `CLAUDE.md` files,
 `scripts/`, the slash commands, `PHILOSOPHY.md` — with no leftover construction artifacts.
 
@@ -58,9 +58,13 @@ layout`, `## Conventions`, `## Operational stack` + the `ptfm-*` pipeline, and `
 more` (drop its `docs/phase-*.md` row). Result: "what it is → what it's built with →
 prerequisites → create & run a product → layout → conventions → workflow → where to read more."
 
-### Step 4 — Delete the `/implement` command
+### Step 4 — Delete the build-time commands
 
-`rm .claude/commands/implement.md` — the build-phase command has no runtime role.
+`rm .claude/commands/implement.md .claude/commands/update.md` — `/implement` (the build-phase
+command) and `/update` (the template **maintainer's** research-refresh command) are template
+machinery; a finished product repo carries neither. Finalize runs only in a *consumer's* copy
+of the template, so sweeping both out is correct — the maintained template repo itself is never
+finalized.
 
 ### Step 5 — Delete the phase guides
 
@@ -73,8 +77,8 @@ useful provenance). Deleting it is an explicit opt-in; if you delete it, also re
 
 ### Step 6 — Verify no dangling references
 
-`git grep -nE 'docs/phase-|commands/implement\b'` must return nothing (a stray mention inside a
-kept `docs/research/` report is acceptable — it's historical). Confirm the runtime surface is
+`git grep -nE 'docs/phase-|commands/(implement|update)\b'` must return nothing (a stray mention
+inside a kept `docs/research/` report is acceptable — it's historical). Confirm the runtime surface is
 intact and the daily commands still resolve (`pnpm new-product`, `/add-feature`, the `ptfm-*`
 pipeline, `pnpm bootstrap`).
 
@@ -87,10 +91,10 @@ PHILOSOPHY/README rewrites land together).
 
 ## Verification
 
-- `.claude/commands/implement.md` is gone; `ls docs/phase-*.md` returns nothing.
+- `.claude/commands/implement.md` + `.claude/commands/update.md` are gone; `ls docs/phase-*.md` returns nothing.
 - `README.md` has no `## Status` / `## Stage 1` / `## Post-setup cleanup` sections.
 - `PHILOSOPHY.md` has no execution-guides callout or phases table (no links to deleted files).
-- `git grep -nE 'docs/phase-|commands/implement\b'` is clean (modulo kept research history).
+- `git grep -nE 'docs/phase-|commands/(implement|update)\b'` is clean (modulo kept research history).
 - The runtime surface is untouched: `scripts/`, the `CLAUDE.md` files, `packages/ui/FIGMA.md`,
   the `ptfm-*` + thin-wrapper commands, `PHILOSOPHY.md`.
 
@@ -99,7 +103,7 @@ PHILOSOPHY/README rewrites land together).
 - [ ] Guard passed (Phases 1–8 verified) and the user confirmed the destructive run.
 - [ ] `PHILOSOPHY.md` trimmed (callout + table removed; rest intact).
 - [ ] `README.md` rewritten to built-state form (no build-process sections).
-- [ ] `.claude/commands/implement.md` deleted.
+- [ ] `.claude/commands/implement.md` + `.claude/commands/update.md` deleted.
 - [ ] `docs/phase-*.md` deleted (research kept-or-deleted decision stated).
 - [ ] No dangling references; runtime surface intact; daily commands resolve.
 - [ ] One commit.
@@ -112,8 +116,8 @@ A single `chore: finalize template — strip build scaffolding`.
 
 - **Never run before Phases 1–8 are verified.** This phase deletes the only instructions for
   building the template — running it early is unrecoverable except via git.
-- **It removes the command that runs it.** Deleting `.claude/commands/implement.md` and this
-  guide is the intended final act; do the deletions last.
+- **It removes the command that runs it.** Deleting `.claude/commands/implement.md` (+
+  `update.md`) and this guide is the intended final act; do the deletions last.
 - **Recoverable only via git history** — there is no in-tree undo. The destructive-gate
   confirmation (Step 1) exists for exactly this reason.
 

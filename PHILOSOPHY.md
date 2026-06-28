@@ -418,7 +418,10 @@ mock transport — integration tests hit the real DB, never mock the session.
 >
 > **Stack provenance:** every tool choice is fact-checked against official docs, with
 > per-surface findings + source URLs in `docs/research/`. Locked version baseline: **pnpm 11,
-> Node 24 LTS, Storybook 9, NativeWind v4 (Tailwind v3), Expo SDK 56**.
+> Node 24 LTS, Storybook 9, NativeWind v4 (Tailwind v3), Expo SDK 56**. The **`/update`** command
+> re-runs this research against current docs and refreshes the whole template (versions, APIs,
+> these guides + this baseline) — every change cited to a live source; it is the sanctioned way
+> to change a locked version.
 
 | # | Build | Verify |
 |---|---|---|
@@ -430,7 +433,7 @@ mock transport — integration tests hit the real DB, never mock the session.
 | 6 | Supabase local + auth: per-product config.toml; core plumbing (session store, guards); `features/auth` login/signup screens + `(auth)`/`(tabs)` route guards; protected `/v1/me`; `core/storage.ts` + avatar upload demo on settings (direct-to-Storage) | `supabase start`; sign up through the template's login screen; guarded tabs redirect when signed out; bearer-token curl → user id; bad token → 401; avatar uploads and renders back from Storage |
 | 7 | Generator + stamp `demo` product (brand-asset placeholders + regen script; `pnpm bootstrap`) | `pnpm new-product demo`; both products build via `--affected`; both local stacks run simultaneously via `pnpm bootstrap`; demo carries its own placeholder brand assets; `git grep -iw template products/demo` empty |
 | 8 | CI/CD workflows + observability (structlog JSON, request_id middleware, X-Request-Id in client wrapper, Sentry init) + push loop (registration → /v1/push-tokens → send_push) + realtime broadcast pattern (api broadcast + core subscribe-and-invalidate on the items list) + scheduled job (Fly machine running tasks.py prune) + E2E harness: Playwright suite (signup → login → items CRUD → realtime) + Storybook visual-regression baselines, both wired into `e2e-nightly.yml` + one Maestro flow (local) + docs/agent surface: root + **`packages/ui` design-system** + product README.md, CLAUDE.md, `.claude/commands/` (the add-a-component recipe documented + runnable via `/add-component`) | push branch → CI green; touch one product → other is cache-hit; stale openapi.json fails drift check; items list refreshes across two open clients after a mutation; API log lines carry the request_id; `e2e-nightly.yml` green via workflow_dispatch (E2E + visual regression); scheduled task runs via `fly machine run` (push registration needs a dev build — Expo Go can't receive push tokens; verified later on real devices) |
-| 9 | **Finalize (destructive; after 1–8 verified):** strip build scaffolding — delete `.claude/commands/implement.md` + `docs/phase-*.md`, trim this callout + table from PHILOSOPHY, rewrite README to its built-state form; keep `docs/research/` by default | guarded on a green 1–8 build + explicit confirm; `.claude/commands/implement.md` + `docs/phase-*.md` gone; no dangling `docs/phase-`/`commands/implement` refs; runtime surface (`scripts/`, CLAUDE.md, `ptfm-*` + thin commands, FIGMA.md) intact; daily commands resolve |
+| 9 | **Finalize (destructive; after 1–8 verified):** strip build scaffolding — delete `.claude/commands/implement.md` + `.claude/commands/update.md` + `docs/phase-*.md`, trim this callout + table from PHILOSOPHY, rewrite README to its built-state form; keep `docs/research/` by default | guarded on a green 1–8 build + explicit confirm; `.claude/commands/implement.md` + `docs/phase-*.md` gone; no dangling `docs/phase-`/`commands/implement` refs; runtime surface (`scripts/`, CLAUDE.md, `ptfm-*` + thin commands, FIGMA.md) intact; daily commands resolve |
 
 Each phase = one commit (or a few logical commits) on a feature branch.
 
