@@ -27,6 +27,7 @@ Reference docs (read these first, in full, in this order):
 - @PHILOSOPHY.md — the architecture / decision GOSPEL: locked decisions, conventions, invariants. This constrains what's even possible to build (and what's "free" vs. expensive). It is law.
 - @CLAUDE.md (repo root) — the monorepo map + conventions (promote-on-2nd-use, naming, semantic-tokens-only, broadcast-only realtime, problem+json, never-edit-generated-client).
 - @products/<product>/CLAUDE.md — the product's structure, ports, infra names, where compositions live, what already ships in this product.
+- the nested **API** `CLAUDE.md` under `products/<product>/api/` — the add-an-endpoint recipe + the strict-layered-OOP / DTO-separation rules (what server capabilities already exist, what's cheap to extend).
 - @packages/ui/CLAUDE.md + @packages/ui/FIGMA.md — the design-system runbook + token contract (what UI primitives already exist, the token modes).
 
 (These CLAUDE.md files are produced when the monorepo / product is stamped from `products/_template`; if one is absent, fall back to `PHILOSOPHY.md`. No architecture / plan / implementation docs to reference — `/ptfm-product` is upstream of `/ptfm-architect` and everything that follows. Those artifacts get produced downstream from this brief.)
