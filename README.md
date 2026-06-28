@@ -138,6 +138,48 @@ pnpm 11 · Node 24 · Python 3.13 · **Expo SDK 56** (RN 0.85) · **NativeWind v
 
 ---
 
+## Operational stack (agentic-workflow integrations)
+
+Product development here is **agentic** — driven by the `ptfm-*` slash-command pipeline (below).
+That pipeline integrates external services over MCP; connect these in Claude Code before running
+it:
+
+| Service | Role in the workflow | MCP family |
+|---|---|---|
+| **Linear** | Issue tracking — tickets, per-phase sub-issues, parent epics | `mcp__Linear__*` |
+| **Notion** | Product briefs, user research, decision records | `mcp__Notion__*` |
+| **Figma** | Design source — frames, Code Connect, token modes | `mcp__Figma__*` |
+| **Supabase** | Database/auth — read-only schema introspection | `mcp__Supabase__*` |
+| **Playwright** | Live web verification / E2E | `mcp__playwright__*` |
+| **GitHub** | Repos, PRs, CI | `mcp__github__*` |
+
+Deploy surfaces: **Fly.io** (API) · **Vercel** (web) · **EAS** (mobile) · **GitHub Releases**
+(desktop).
+
+### Development workflow — the `ptfm-*` pipeline
+
+Products are built via a namespaced agentic pipeline. Every command takes the **product name as
+its first argument** and writes its artifact under that product's own docs tree
+(`products/<product>/docs/{product,architecture,plans,implementation,reviews}/`):
+
+```
+/ptfm-product → /ptfm-architect → /ptfm-plan → /ptfm-implement → /ptfm-audit
+              → /ptfm-simplify → /ptfm-commonify → /ptfm-review → /ptfm-test-ui
+```
+
+- **`product` + `architect`** are optional (new product surfaces / multi-phase features); small
+  features and bug fixes enter at **`plan`**.
+- **`plan → implement → audit`** is the core spine; the rest is the post-implementation quality
+  cascade. `review` and `test-ui` run last so they assess the final shipped shape.
+- When the optional head runs, each artifact binds the next (product brief → architecture →
+  per-phase plan).
+
+These commands are distinct from the thin `pnpm`/`turbo` wrappers — they encode the project's
+invariants as executable flows. (Not to be confused with `/implement`, the *build-time* command
+that constructs the monorepo's eight phases.)
+
+---
+
 ## Post-setup cleanup (once the template is built)
 
 The Phases 1–8 material is **build-time scaffolding** — nothing in daily development references
