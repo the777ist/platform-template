@@ -155,7 +155,7 @@ What `/ptfm-implement` does NOT mean:
 ## Available MCPs (use as needed)
 
 - **Linear** (`mcp__Linear__*`) — re-read the ticket, post a comment when the implementation is done if helpful.
-- **Supabase** (`mcp__Supabase__*`) — read-only schema introspection: `list_tables`, `list_migrations`, `execute_sql`. Schema changes go via **Alembic**, not raw `apply_migration`; the MCP is for introspecting the live schema so migrations target the actual current state.
+- **Supabase** (`mcp__Supabase__*`) — read-only schema introspection: `list_tables`, `list_migrations`, `execute_sql`. Schema changes go via **Alembic**, not raw `apply_migration`; the MCP is for introspecting the live schema so migrations target the actual current state. **Fallback (Management API):** if the Supabase MCP lacks a read-only tool you need, query the [Supabase Management API](https://supabase.com/docs/reference/api/introduction) with a Personal Access Token (generate at https://supabase.com/dashboard/account/tokens) — **introspection only; schema changes always go through Alembic, never the Management API.**
 - **Figma** (`mcp__Figma__*`) — pull the design + design tokens (Code Connect + variable defs) for any UI surface so the build matches the token contract; never hand-name a colour.
 - **Notion** (`mcp__Notion__*`) — fetch any Notion docs the plan or ticket references.
 - **Playwright** (`mcp__playwright__*`) — only if you need to verify a web UI flow live during implementation (rare; full UI testing is `/ptfm-test-ui`'s job).

@@ -81,7 +81,7 @@ What "simplification" does NOT mean here:
 ## Available MCPs / CLIs (use as needed)
 
 - **Linear** (`mcp__Linear__*`) — re-read the ticket / comments for context on what was originally intended (helps decide what's safe to collapse vs. what's load-bearing).
-- **Supabase** (`mcp__Supabase__*`) — read-only schema introspection: `list_tables`, `list_migrations`, `execute_sql` for read-only checks on whether a helper is genuinely the only consumer of a schema element before consolidating. Introspection only — migrations go via **Alembic**, never `apply_migration`.
+- **Supabase** (`mcp__Supabase__*`) — read-only schema introspection: `list_tables`, `list_migrations`, `execute_sql` for read-only checks on whether a helper is genuinely the only consumer of a schema element before consolidating. Introspection only — migrations go via **Alembic**, never `apply_migration`. **Fallback (Management API):** if the Supabase MCP lacks a read-only tool you need, query the [Supabase Management API](https://supabase.com/docs/reference/api/introduction) with a Personal Access Token (generate at https://supabase.com/dashboard/account/tokens) — **introspection only; schema changes always go through Alembic, never the Management API.**
 - **Notion** (`mcp__Notion__*`) — rare; only if a referenced doc clarifies original intent.
 - **Playwright** (`mcp__playwright__*`) — rare; this isn't a UI-test pass. Use only if a behaviour-preserving refactor needs a live web sanity check.
 
