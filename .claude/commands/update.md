@@ -80,7 +80,8 @@ Map to the existing research reports + the phase guide(s) each feeds:
    pin a version or name an API, and any `CLAUDE.md` once those exist. Update EVERY occurrence —
    grep for the old version/API across the repo so nothing dangles.
 5. **Verify consistency.** No contradictory versions across files; no dangling refs; cross-links
-   intact; repo-relative paths only; no `creator`/old-clone-dir leakage. Run a grep sweep for
+   intact; repo-relative paths only; never leak the host checkout/clone directory name into
+   files. Run a grep sweep for
    the surface's old pins to confirm full propagation.
 6. **Commit** this surface: `chore(update): refresh <surface> — <old→new headline>` with the
    key source URLs in the body.
