@@ -225,12 +225,14 @@ that constructs the monorepo's eight phases.)
 ## Maintaining this template
 
 *For whoever owns/maintains **this template repo** — not something a consumer building a product
-runs.* `/update` keeps the template current: it re-runs **deep web research** for every surface
-against current official docs, then folds the findings into the research reports,
-`PHILOSOPHY.md`, the phase guides, the `ptfm-*` commands, and this README — bumping versions and
-adapting to changed APIs / deprecations, every change cited to a live source. Run `/update`
-(all surfaces) or `/update <surface>` (e.g. `/update expo`). It is **research-gated**: if live
-web research isn't available it stops rather than update from stale knowledge.
+runs.* `/update` keeps the template current: it re-runs **deep web research** against current
+official docs, then folds the findings into the phase guides, the research reports,
+`PHILOSOPHY.md`, the `ptfm-*` commands, and this README — bumping versions and adapting to
+changed APIs / deprecations, every change cited to a live source. It maps to phases **exactly
+like `/implement`**: `/update <N>` refreshes the same phase `/implement <N>` builds
+(`/update 3` = the API phase); `/update` with no args refreshes every phase, 1 → 9,
+sequentially. It is **research-gated**: if live web research isn't available it stops rather
+than update from stale knowledge.
 
 The template repo itself is never finalized — it stays a template. (Phase 9 / `/update` only
 meet in a *consumer's* copy, where graduation sweeps out all template machinery, `/update`
