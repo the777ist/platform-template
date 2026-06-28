@@ -98,7 +98,7 @@ What "commonification" does NOT mean here:
 ## Available MCPs / CLIs (use as needed)
 
 - **Linear** (`mcp__Linear__*`) — re-read the ticket / comments for context on which constructs were always feature-specific vs. accidentally local.
-- **Supabase** (`mcp__Supabase__*`) — read-only schema introspection: `list_tables`, `list_migrations`, `execute_sql` for read-only checks when a relocation involves schema-aware helpers. **Migrations go via Alembic, NOT `apply_migration`** — use the MCP only to introspect. **Fallback (Management API):** if the Supabase MCP lacks a read-only tool you need, query the [Supabase Management API](https://supabase.com/docs/reference/api/introduction) with a Personal Access Token (generate at https://supabase.com/dashboard/account/tokens) — **introspection only; schema changes always go through Alembic, never the Management API.**
+- **Supabase** (`mcp__Supabase__*`) — read-only schema introspection: `list_tables`, `list_migrations`, `execute_sql` for read-only checks when a relocation involves schema-aware helpers. **Migrations go via Alembic, NOT `apply_migration`** — use the MCP only to introspect.
 - **Figma** (`mcp__Figma__*`) — this project has a deep Figma integration (Code Connect + token modes). Use it when promoting a UI primitive to `packages/ui`, to confirm the lifted primitive matches its Figma component and its token modes (light/dark × brand) before it becomes shared. Full UI testing is `/ptfm-test-ui`'s job.
 - **Notion** (`mcp__Notion__*`) — rare; only if a referenced doc clarifies original intent (whether a construct was always meant to be shared).
 - **Playwright** (`mcp__playwright__*`) — rare; this isn't a UI-test pass.

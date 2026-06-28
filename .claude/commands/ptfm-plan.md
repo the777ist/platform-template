@@ -226,7 +226,7 @@ What `/ptfm-plan` does NOT mean:
 - **Linear** (`mcp__Linear__*`) — `get_issue`, `list_comments`, `get_project`, `list_issues`, `search_documentation` for context. The primary source of the ticket.
 - **Notion** (`mcp__Notion__*`) — fetch any Notion docs the Linear ticket references.
 - **Figma** (`mcp__Figma__*`) — deep design integration: Code Connect + design tokens. The design reference for any UI surface; pull token defs (`get_variable_defs`), screenshots, and the component-to-code mapping so the plan's tokens / primitives match the source of truth.
-- **Supabase** (`mcp__Supabase__*`) — **read-only schema introspection only**: `list_tables`, `list_migrations`, `execute_sql` for read-only schema queries. Migrations go via **Alembic**, not raw `apply_migration` — the MCP introspects, it does not mutate schema here. **Fallback (Management API):** if the Supabase MCP lacks a read-only tool you need, query the [Supabase Management API](https://supabase.com/docs/reference/api/introduction) with a Personal Access Token (generate at https://supabase.com/dashboard/account/tokens) — **introspection only; schema changes always go through Alembic, never the Management API.**
+- **Supabase** (`mcp__Supabase__*`) — **read-only schema introspection only**: `list_tables`, `list_migrations`, `execute_sql` for read-only schema queries. Migrations go via **Alembic**, not raw `apply_migration` — the MCP introspects, it does not mutate schema here.
 - **Playwright** (`mcp__playwright__*`) — only if you need to inspect existing web behaviour live (rare during planning).
 
 Deployment context spans the project's four surfaces — **Fly** (api), **EAS** (mobile), **Vercel** (web), **Electron** (desktop) — a light reference, not a workflow pillar.
