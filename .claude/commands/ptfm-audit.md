@@ -42,7 +42,7 @@ Reference docs (read these first, in full):
 Discover the file surface yourself — do not ask the user to paste files:
 
 1. Run `git status` to see currently staged + unstaged changes.
-2. Run `git diff master...HEAD --name-only` (or whatever the base branch is) to enumerate every file that's changed since the branch diverged.
+2. Run `git diff main...HEAD --name-only` (or whatever the base branch is) to enumerate every file that's changed since the branch diverged.
 3. Glob `products/<product>/app/features/<FEATURE>/**` for the feature module itself.
 4. Walk imports outward — every Expo Router route/screen, component, hook, store, and generated-client hook the feature touches; every `@platform/ui` primitive and `packages/core` helper it depends on; and across the API: every `schemas/`, `routers/`, `services/`, `models/` file the endpoint chain touches.
 5. Also include any migrations under `products/<product>/api/.../alembic/versions/*` whose revisions reference the feature, and any regeneration of `products/<product>/api-client/`.
